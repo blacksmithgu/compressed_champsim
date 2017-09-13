@@ -187,7 +187,7 @@ class CACHE : public MEMORY {
          update_fill_cycle(),
          llc_initialize_replacement(),
          update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit),
-         llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit),
+         llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency),
          lru_update(uint32_t set, uint32_t way),
          fill_cache(uint32_t set, uint32_t way, PACKET *packet),
          replacement_final_stats(),

@@ -105,7 +105,10 @@ class PACKET {
              data,
              instr_id,
              ip, 
-             event_cycle;
+             event_cycle,
+             latency, 
+             last_update_cycle,
+             effective_latency;
 
     PACKET() {
         instruction = 0;
@@ -154,6 +157,9 @@ class PACKET {
         instr_id = 0;
         ip = 0;
         event_cycle = UINT64_MAX;
+        latency = 0;
+        last_update_cycle = 0;
+        effective_latency = 0;
     };
 };
 
@@ -170,7 +176,8 @@ class PACKET_QUEUE {
     uint32_t cpu, 
              head, 
              tail, 
-             occupancy, 
+             occupancy,
+             read_occupancy, 
              num_returned, 
              next_fill_index, 
              next_schedule_index, 
@@ -199,6 +206,7 @@ class PACKET_QUEUE {
         head = 0;
         tail = 0;
         occupancy = 0;
+        read_occupancy = 0;
         num_returned = 0;
         next_fill_index = 0;
         next_schedule_index = 0;

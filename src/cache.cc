@@ -32,7 +32,7 @@ void CACHE::handle_fill()
 
             // update replacement policy
             if (cache_type == IS_LLC) {
-                llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0);
+                llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
 
             }
             else
@@ -50,7 +50,9 @@ void CACHE::handle_fill()
                 else // data
                     upper_level_dcache[fill_cpu]->return_data(&MSHR.entry[mshr_index]);
             }
-
+            
+            if(MSHR.entry[mshr_index].type == LOAD)
+                MSHR.read_occupancy--;
             MSHR.remove_queue(&MSHR.entry[mshr_index]);
             MSHR.num_returned--;
 
@@ -113,7 +115,7 @@ void CACHE::handle_fill()
 
             // update replacement policy
             if (cache_type == IS_LLC) {
-                llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, block[set][way].full_addr, MSHR.entry[mshr_index].type, 0);
+                llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, block[set][way].full_addr, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
 
             }
             else
@@ -161,6 +163,8 @@ void CACHE::handle_fill()
                     PROCESSED.add_queue(&MSHR.entry[mshr_index]);
             }
 
+            if(MSHR.entry[mshr_index].type == LOAD)
+                MSHR.read_occupancy--;
             MSHR.remove_queue(&MSHR.entry[mshr_index]);
             MSHR.num_returned--;
 
@@ -187,7 +191,7 @@ void CACHE::handle_writeback()
         if (way >= 0) { // writeback hit (or RFO hit for L1D)
 
             if (cache_type == IS_LLC) {
-                llc_update_replacement_state(writeback_cpu, set, way, block[set][way].full_addr, WQ.entry[index].ip, 0, WQ.entry[index].type, 1);
+                llc_update_replacement_state(writeback_cpu, set, way, block[set][way].full_addr, WQ.entry[index].ip, 0, WQ.entry[index].type, 1, 0, 0);
 
             }
             else
@@ -363,7 +367,7 @@ void CACHE::handle_writeback()
 
                     // update replacement policy
                     if (cache_type == IS_LLC) {
-                        llc_update_replacement_state(writeback_cpu, set, way, WQ.entry[index].full_addr, WQ.entry[index].ip, block[set][way].full_addr, WQ.entry[index].type, 0);
+                        llc_update_replacement_state(writeback_cpu, set, way, WQ.entry[index].full_addr, WQ.entry[index].ip, block[set][way].full_addr, WQ.entry[index].type, 0, 0, 0);
 
                     }
                     else
@@ -449,7 +453,7 @@ void CACHE::handle_read()
 
                 // update replacement policy
                 if (cache_type == IS_LLC) {
-                    llc_update_replacement_state(read_cpu, set, way, block[set][way].full_addr, RQ.entry[index].ip, 0, RQ.entry[index].type, 1);
+                    llc_update_replacement_state(read_cpu, set, way, block[set][way].full_addr, RQ.entry[index].ip, 0, RQ.entry[index].type, 1, 0, 0);
 
                 }
                 else
@@ -645,7 +649,7 @@ void CACHE::handle_prefetch()
 
                 // update replacement policy
                 if (cache_type == IS_LLC) {
-                    llc_update_replacement_state(prefetch_cpu, set, way, block[set][way].full_addr, PQ.entry[index].ip, 0, PQ.entry[index].type, 1);
+                    llc_update_replacement_state(prefetch_cpu, set, way, block[set][way].full_addr, PQ.entry[index].ip, 0, PQ.entry[index].type, 1, 0, 0);
 
                 }
                 else
@@ -1253,6 +1257,12 @@ void CACHE::return_data(PACKET *packet)
     MSHR.num_returned++;
     MSHR.entry[mshr_index].returned = COMPLETED;
     MSHR.entry[mshr_index].data = packet->data;
+    MSHR.entry[mshr_index].latency = (current_core_cycle[packet->cpu] - MSHR.entry[mshr_index].event_cycle);
+    if(MSHR.read_occupancy != 0)
+        MSHR.entry[mshr_index].effective_latency += (uint64_t) ((double)(current_core_cycle[packet->cpu] - MSHR.entry[mshr_index].last_update_cycle)/(double)(MSHR.read_occupancy));
+    else
+        MSHR.entry[mshr_index].effective_latency += (current_core_cycle[packet->cpu] - MSHR.entry[mshr_index].last_update_cycle);
+
 
     // ADD LATENCY
     if (MSHR.entry[mshr_index].event_cycle < current_core_cycle[packet->cpu])
@@ -1333,6 +1343,7 @@ int CACHE::check_mshr(PACKET *packet)
 void CACHE::add_mshr(PACKET *packet)
 {
     uint32_t index = 0;
+    bool is_demand = (packet->type == LOAD);
 
     // search mshr
     for (index=0; index<MSHR_SIZE; index++) {
@@ -1340,7 +1351,11 @@ void CACHE::add_mshr(PACKET *packet)
             
             MSHR.entry[index] = *packet;
             MSHR.entry[index].returned = INFLIGHT;
+            MSHR.entry[index].effective_latency = 0;
+            MSHR.entry[index].last_update_cycle = current_core_cycle[packet->cpu];
             MSHR.occupancy++;
+            if(is_demand)
+                 MSHR.read_occupancy++;   
 
             DP ( if (warmup_complete[packet->cpu]) {
             cout << "[" << NAME << "_MSHR] " << __func__ << " instr_id: " << packet->instr_id;
@@ -1350,6 +1365,17 @@ void CACHE::add_mshr(PACKET *packet)
             break;
         }
     }
+
+    if((!is_demand) || (MSHR.read_occupancy <= 1))
+        return;
+
+    for (uint32_t i=0; i<MSHR_SIZE; i++) {
+        if (MSHR.entry[i].address != 0) {
+            MSHR.entry[i].effective_latency += (uint64_t) ((double)(current_core_cycle[MSHR.entry[i].cpu] - MSHR.entry[i].last_update_cycle)/(double)(MSHR.read_occupancy - 1));
+            MSHR.entry[i].last_update_cycle = current_core_cycle[MSHR.entry[i].cpu];
+        }
+    }
+
 }
 
 uint32_t CACHE::get_occupancy(uint8_t queue_type, uint64_t address)
