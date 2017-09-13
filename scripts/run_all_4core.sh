@@ -24,7 +24,7 @@ do
     script_name="$num"
 
     #cd $output_dir
-    command="/u/akanksha/ChampSim_public/ChampSim_public/scripts/run_4core.sh $binary 0 250 $num $output_dir"
+    command="/u/akanksha/ChampsimGitHub/ChampSim/scripts/run_4core.sh $binary 0 250 $num $output_dir"
 #    echo $command
 
     /u/akanksha/cache_study/condor_shell --silent --log --condor_dir="$condor_dir" --condor_suffix="$num" --output_dir="$output_dir/scripts" --simulate --script_name="$script_name" --cmdline="$command"

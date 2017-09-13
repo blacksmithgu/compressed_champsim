@@ -28,8 +28,8 @@ do
     script_name="$benchmark"
 
     #cd $output_dir
-    #command="/u/akanksha/ChampSim_public/ChampSim_public/scripts/run_champsim.sh $binary 0 1000 $trace_file $output_dir low_bandwidth"
-    command="/u/akanksha/ChampSim_public/ChampSim_public/scripts/run_champsim.sh $binary 200 1000 $trace_file $output_dir"
+    #command="/u/akanksha/ChampsimGitHub/ChampSim/scripts/run_champsim.sh $binary 0 1000 $trace_file $output_dir low_bandwidth"
+    command="/u/akanksha/ChampsimGitHub/ChampSim/scripts/run_champsim.sh $binary 0 250 $trace_file $output_dir"
 
     /u/akanksha/cache_study/condor_shell --silent --log --condor_dir="$condor_dir" --condor_suffix="$benchmark" --output_dir="$output_dir/scripts" --simulate --script_name="$script_name" --cmdline="$command"
 
