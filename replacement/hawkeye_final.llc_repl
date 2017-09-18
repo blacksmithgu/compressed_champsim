@@ -43,7 +43,7 @@ bool prefetched[LLC_SETS][LLC_WAYS];
 // Predictor with 2K entries and 5-bit counter per entry
 // Budget = 2048*5/8 bytes = 1.2KB
 #define MAX_SHCT 31
-#define SHCT_SIZE_BITS 11
+#define SHCT_SIZE_BITS 14
 #define SHCT_SIZE (1<<SHCT_SIZE_BITS)
 #include "hawkeye_predictor.h"
 HAWKEYE_PC_PREDICTOR* demand_predictor;  //Predictor
@@ -57,11 +57,12 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
 #define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
 #define bits(x, i, l) (((x) >> (i)) & bitmask(l))
 //Sample 64 sets per core
-#define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SETS) - 6), 6) )
+//#define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SETS) - 6), 6) )
+#define SAMPLED_SET(set) (bits(set, 0 , 8) == bits(set, ((unsigned long long)log2(LLC_SETS) - 8), 8) )
 
 // Sampler to track 8x cache history for sampled sets
 // 2800 entris * 4 bytes per entry = 11.2KB
-#define SAMPLED_CACHE_SIZE 2800
+#define SAMPLED_CACHE_SIZE 2800*NUM_CPUS
 #define SAMPLER_WAYS 8
 #define SAMPLER_SETS SAMPLED_CACHE_SIZE/SAMPLER_WAYS
 vector<map<uint64_t, ADDR_INFO> > addr_history; // Sampler
@@ -72,6 +73,8 @@ vector<uint64_t> dp_interval_distribution;
 vector<uint64_t> pd_interval_distribution;
 vector<uint64_t> pp_interval_distribution;
 uint64_t dd_intervals, dp_intervals, pd_intervals, pp_intervals;
+uint64_t dd_accuracy, dp_accuracy, pd_accuracy, pp_accuracy;
+uint64_t dd_cached, dp_cached, pd_cached, pp_cached;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -98,6 +101,15 @@ void CACHE::llc_initialize_replacement()
     pd_intervals = 0;
     dd_intervals = 0;
     
+    pp_accuracy = 0;
+    dp_accuracy = 0;
+    pd_accuracy = 0;
+    dd_accuracy = 0;
+
+    pp_cached = 0;
+    dp_cached = 0;
+    pd_cached = 0;
+    dd_cached = 0;
     cout << "Initialize Hawkeye state" << endl;
 }
 
@@ -219,6 +231,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                     pd_interval_distribution.resize((interval + 1), 0);
                 pd_interval_distribution[interval]++;
                 pd_intervals++;
+                //cout << "PD: " << hex << paddr << " " << addr_history[sampler_set][sampler_tag].PC << dec;
             }
             else
             {
@@ -231,18 +244,32 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             //and for prefetch hits, we train the last prefetch trigger PC
             if( !wrap && perset_optgen[set].should_cache(curr_quanta, last_quanta, false, cpu))
             {
-                if(addr_history[sampler_set][sampler_tag].prefetched)
+                if(addr_history[sampler_set][sampler_tag].prefetched) { 
                     prefetch_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
-                else
+                    if(addr_history[sampler_set][sampler_tag].last_prediction) {
+                        pd_accuracy++;
+                    }
+                    pd_cached++;
+                }
+                else {
                     demand_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
+                    if(addr_history[sampler_set][sampler_tag].last_prediction)
+                        dd_accuracy++;
+                }
             }
             else
             {
                 //Train the predictor negatively because OPT would not have cached this line
-                if(addr_history[sampler_set][sampler_tag].prefetched)
+                if(addr_history[sampler_set][sampler_tag].prefetched) {
                     prefetch_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
-                else
+                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
+                        pd_accuracy++;
+                }
+                else {
                     demand_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
+                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
+                        dd_accuracy++;
+                }
             }
             //Some maintenance operations for OPTgen
             perset_optgen[set].add_access(curr_quanta, cpu);
@@ -300,11 +327,41 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 if(perset_optgen[set].should_cache(curr_quanta, last_quanta, true, cpu))
                 {
                     if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
+                    {
                         prefetch_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
+
+                        if(addr_history[sampler_set][sampler_tag].last_prediction)
+                            pp_accuracy++;
+                    }
                     else //D-P
+                    {
                         demand_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
+                        if(addr_history[sampler_set][sampler_tag].last_prediction)
+                            dp_accuracy++;
+                    }
+                }
+                else
+                {
+                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
+                    {
+                        if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
+                            pp_accuracy++;
+                        else
+                            dp_accuracy++;
+                    }
                 }
             }
+            else
+            {
+                if(addr_history[sampler_set][sampler_tag].last_prediction == false)
+                {
+                    if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
+                        pp_accuracy++;
+                    else
+                        dp_accuracy++;
+                }
+            }
+
 
             //Mark the prefetched bit
             addr_history[sampler_set][sampler_tag].mark_prefetch(); 
@@ -384,23 +441,24 @@ void CACHE::llc_replacement_final_stats()
         std::cout << "OPTgen hit rate for core " << k <<": " << 100*(double)per_core_hits[k]/(double)per_core_accesses[k] << std::endl;
 
     cout << endl << endl;
-    cout << "D-D intervals: " << dd_intervals << endl;
+    cout << "D-D intervals: " << dd_intervals << " " << 100*((double)dd_accuracy/(double)dd_intervals) << endl;
     for(unsigned int i=0; i<dd_interval_distribution.size(); i++)
         cout << dd_interval_distribution[i] << " ";
     cout << endl;
 
-    cout << "D-P intervals: " << dp_intervals << endl;
+    cout << "D-P intervals: " << dp_intervals << " " << 100*((double)dp_accuracy/(double)dp_intervals) << endl;
     for(unsigned int i=0; i<dp_interval_distribution.size(); i++)
         cout << dp_interval_distribution[i] << " ";
     cout << endl;
 
-    cout << "P-D intervals: " << pd_intervals << endl;
+    cout << "P-D intervals: " << pd_intervals << " " << 100*((double)pd_accuracy/(double)pd_intervals) << endl;
+    cout << "P-D cached: " << 100*(double)pd_cached/(double)pd_intervals << endl;
     for(unsigned int i=0; i<pd_interval_distribution.size(); i++)
         cout << pd_interval_distribution[i] << " ";
     cout << endl;
 
 
-    cout << "P-P intervals: " << pp_intervals << endl;
+    cout << "P-P intervals: " << pp_intervals << " " << 100*((double)pp_accuracy/(double)pp_intervals) << endl;
     for(unsigned int i=0; i<pp_interval_distribution.size(); i++)
         cout << pp_interval_distribution[i] << " ";
     cout << endl;
