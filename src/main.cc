@@ -18,6 +18,8 @@ uint64_t warmup_instructions     = 1000000,
 
 time_t start_time;
 
+string outputDecisionFile;
+
 // PAGE TABLE
 uint32_t PAGE_TABLE_LATENCY = 0, SWAP_LATENCY = 0;
 queue <uint64_t > page_queue;
@@ -473,6 +475,7 @@ int main(int argc, char** argv)
             {"cloudsuite", no_argument, 0, 'c'},
             {"low_bandwidth",  no_argument, 0, 'b'},
             {"traces",  no_argument, 0, 't'},
+            {"output_decision", required_argument, 0, 'd'},
             {0, 0, 0, 0}      
         };
 
@@ -505,6 +508,9 @@ int main(int argc, char** argv)
                 break;
             case 't':
                 traces_encountered = 1;
+                break;
+            case 'd':
+                outputDecisionFile.assign(optarg);
                 break;
             default:
                 abort();
