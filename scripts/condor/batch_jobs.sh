@@ -3,7 +3,7 @@
 BUILD_DIR=/u/roshan/CacheReplacement/ChampSim/bin
 LOG_DIR=/u/roshan/CacheReplacement/ChampSim/logs
 TRACE_DIR=/scratch/cluster/akanksha/CRCRealTraces
-EXEC_NAME=bimodal-no-no-obol_readaccess_decisions-1core
+EXEC_NAME=bimodal-no-no-obol_decisions-1core
 JOB_ID="`date +%Y_%m_%d_%H_%M_%S`";
 mkdir -p ${LOG_DIR}/temp
 mkdir -p ${LOG_DIR}/${EXEC_NAME}/${JOB_ID}

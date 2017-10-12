@@ -79,6 +79,24 @@ map<uint64_t, ADDR_INFO> addr_history; // Sampler
 extern string outputDecisionFile;
 map<uint64_t, vector<bool> > decisions;
 
+map<uint64_t, unsigned> access_counter;
+void init_access(uint64_t paddr) {
+  access_counter[paddr] = 8;
+}
+void update_high_cost_access(uint64_t paddr) {
+  unsigned& counter = access_counter[paddr];
+  if (counter < 15) ++counter;
+}
+void update_low_cost_access(uint64_t paddr) {
+  unsigned& counter = access_counter[paddr];
+  if (counter > 0) --counter;
+}
+bool predict_access_high_cost(uint64_t paddr) {
+  unsigned& counter = access_counter[paddr];
+  if (counter > 7) return true;
+  return false;
+}
+
 struct Q_ENTRY
 {
     uint64_t addr;
@@ -215,6 +233,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
       decisions[paddr] = vector<bool>();
     }
     
+    auto it2 = access_counter.find(paddr);
+    if (it2 == access_counter.end()) {
+      init_access(paddr);
+    }
+
     // statistics
     if (hit) {
         assert(effective_latency == 0.0);
@@ -223,9 +246,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         if (is_cost_high(effective_latency)) {
             ++num_high_cost_misses;
             total_high_cost += effective_latency;
+            update_high_cost_access(paddr);
         } else {
             ++num_low_cost_misses;
             total_low_cost += effective_latency;
+            update_low_cost_access(paddr);
         }
     }
 
@@ -250,12 +275,12 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 #ifdef NO_COST_PREDICTED_CORRECTION
             is_high_cost = is_high_cost_predicted;
 #else
-            is_high_cost = is_cost_high(effective_latency);
-            //assert(addr_history[paddr].last_miss_cost != 0);
-            if(hit)
-                is_high_cost = is_cost_high(addr_history[paddr].last_miss_cost);
+            if (hit) {
+                is_high_cost = predict_access_high_cost(paddr);
+            } else {
+                is_high_cost = is_cost_high(effective_latency);
+            }
 
-            //cout << effective_latency << " " << is_high_cost << " " << is_high_cost_predicted << endl;
             if (!is_high_cost && is_high_cost_predicted) { // false negative prediction
                 // remove from the high-cost queue
                 for (auto it = high_cost_queue.begin(); it != high_cost_queue.end(); ++it) {
@@ -408,7 +433,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
         bool is_next_high_cost;
 #ifdef CURRENT_COST_PREDICTION
-        is_next_high_cost = is_cost_high(effective_latency);
+        if (hit) {
+            is_next_high_cost = predict_access_high_cost(paddr);
+        } else {
+            is_next_high_cost = is_cost_high(effective_latency);
+        }
 #else   
         is_next_high_cost = true;
 #endif
