@@ -134,6 +134,7 @@ uint64_t num_high_cost_misses;
 uint64_t total_high_cost;
 uint64_t num_low_cost_misses;
 uint64_t total_low_cost;
+uint64_t num_mismatched_misses;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -179,6 +180,7 @@ void CACHE::llc_initialize_replacement()
     total_high_cost = 0.0;
     num_low_cost_misses = 0;
     total_low_cost = 0.0;
+    num_mismatched_misses = 0;
     obol_total_cost = 0;
 #ifdef SAMPLING
     assert(0);
@@ -273,12 +275,22 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         }
         ++num_hits;
     } else {
-        if (is_cost_high(effective_latency)) {
+        bool is_high_cost = is_cost_high(effective_latency);
+        if (is_high_cost) {
             ++num_high_cost_misses;
             total_high_cost += effective_latency;
         } else {
             ++num_low_cost_misses;
             total_low_cost += effective_latency;
+        }
+        if (history_found) {
+          auto index = access_count[paddr];
+          if (index < access_history[paddr].size()) {
+            auto predicted_latency = access_history[paddr][index].effective_latency;
+            if (is_high_cost != is_cost_high(predicted_latency)) {
+              ++num_mismatched_misses;
+            }
+          }
         }
     }
     if (history_found) ++access_count[paddr];
@@ -576,6 +588,8 @@ void CACHE::llc_replacement_final_stats()
 
     double unknown_hit_rate = 100 * (double) num_unknown_hits / num_hits;
     std::cout << "Percentages of hits whose cost was not known: " << unknown_hit_rate << std::endl;
+    double mismatched_rate = 100 * (double) num_mismatched_misses / num_misses;
+    std::cout << "Percentages of misses whose cost did not match: " << mismatched_rate << std::endl;
 
     std::cout << "\n\nCache_sets,Associativity,Cost_threshold,Cost_ratio,Benchmark,IPC,Accesses,Hit_rate,High_cost_miss_rate,Low_cost_miss_rate,Total_cost,High_cost_contribution,Low_cost_contribution,Prediction_accuracy\n";
     std::cout << LLC_SETS << "," << LLC_WAYS << "," << OBOL_COST_THRESHOLD << "," << OBOL_COST_RATIO << ",,," << num_accesses << "," << hit_rate << "," << high_cost_miss_rate << "," << low_cost_miss_rate << "," << (uint64_t)total_cost << "," << high_cost_contribution << "," << low_cost_contribution << "," << prediction_accuracy << "\n\n\n";
