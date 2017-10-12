@@ -140,7 +140,12 @@ void CACHE::llc_initialize_replacement()
     num_low_cost_misses = 0;
     total_low_cost = 0.0;
     obol_total_cost = 0;
+#ifdef SAMPLING
+    assert(0);
+    cout << "Initialize Obol state" << endl;
+#else
     cout << "Initialize Obol state (sampling disabled)" << endl;
+#endif
 }
 
 // find replacement victim
@@ -388,7 +393,6 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         else
         {
 #ifdef SAMPLING
-            assert(0);
             // Find a victim from the sampled cache if we are sampling
             assert(addr_history.size() <= SAMPLED_CACHE_SIZE);
             if(addr_history.size() == SAMPLED_CACHE_SIZE) 

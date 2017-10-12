@@ -96,6 +96,7 @@ uint32_t addr_history_miss;
 uint32_t hawkeye_accuracy;
 uint32_t mytimer;
 uint64_t num_hits;
+uint64_t obol_total_cost;
 uint64_t num_high_cost_misses;
 uint64_t total_high_cost;
 uint64_t num_low_cost_misses;
@@ -131,7 +132,12 @@ void CACHE::llc_initialize_replacement()
     total_high_cost = 0.0;
     num_low_cost_misses = 0;
     total_low_cost = 0.0;
+    obol_total_cost = 0;
+#ifdef SAMPLING
     cout << "Initialize Obol state" << endl;
+#else
+    cout << "Initialize Obol state (sampling disabled)" << endl;
+#endif
 }
 
 // find replacement victim
@@ -193,7 +199,6 @@ bool is_cost_high(double effective_latency)
 void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
 {
     uint64_t paddr = (full_addr >> 6) << 6;
-
     if (type == WRITEBACK)
         return;
     
@@ -217,6 +222,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
     //If we are sampling, OPTgen will only see accesses from sampled sets
     if(SAMPLED_SET(set))
     {
+            //cout << hex << paddr << dec << endl;
         auto& high_cost_queue = high_cost_queues[set];
         auto& low_cost_queue = low_cost_queues[set];
         auto& optgen = perset_optgen[set];
@@ -232,6 +238,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             is_high_cost = is_high_cost_predicted;
 #else
             is_high_cost = is_cost_high(effective_latency);
+            //assert(addr_history[paddr].last_miss_cost != 0);
+            if(hit)
+                is_high_cost = is_cost_high(addr_history[paddr].last_miss_cost);
+
+            //cout << effective_latency << " " << is_high_cost << " " << is_high_cost_predicted << endl;
             if (!is_high_cost && is_high_cost_predicted) { // false negative prediction
                 // remove from the high-cost queue
                 for (auto it = high_cost_queue.begin(); it != high_cost_queue.end(); ++it) {
@@ -258,6 +269,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                     demand_predictor->decrement(addr_history[paddr].PC);
                     if(addr_history[paddr].last_prediction == false)
                         hawkeye_accuracy++;
+
+                    obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
                 }
 
 
@@ -284,6 +297,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                                 demand_predictor->decrement(addr_history[low_cost_line.addr].PC);
                                 if(addr_history[low_cost_line.addr].last_prediction == false)
                                     hawkeye_accuracy++;
+                                obol_total_cost += addr_history[low_cost_line.addr].last_miss_cost;
                             }
                         }
                         low_cost_queue.pop_front();
@@ -302,6 +316,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                         demand_predictor->decrement(addr_history[paddr].PC);
                         if(addr_history[paddr].last_prediction == false)
                             hawkeye_accuracy++;
+                    
+                        obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
                     }
                 } else { // competing with high_cost line
                     Q_ENTRY new_interval(paddr, last_quanta, curr_quanta);
@@ -336,6 +352,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                                         demand_predictor->decrement(addr_history[low_cost_line.addr].PC);
                                         if(addr_history[low_cost_line.addr].last_prediction == false)
                                             hawkeye_accuracy++;
+                                
+                                        obol_total_cost += addr_history[low_cost_line.addr].last_miss_cost;
                                     }
                                 }
                                 low_cost_queue.pop_front();
@@ -364,12 +382,13 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             //Initialize a new entry in the sampler
             addr_history[paddr].init(curr_quanta);
             optgen.add_access(curr_quanta);
+            obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
         }
 
         bool is_next_high_cost;
 #ifdef CURRENT_COST_PREDICTION
         is_next_high_cost = is_cost_high(effective_latency);
-#else
+#else   
         is_next_high_cost = true;
 #endif
 
@@ -379,6 +398,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         // Update the sampler with the timestamp, PC and our prediction
         addr_history[paddr].update(curr_quanta, ip, new_prediction, is_next_high_cost);
         addr_history[paddr].lru = 0;
+        if(!hit)
+            addr_history[paddr].last_miss_cost = effective_latency;
 
         //Increment the set timer
         perset_mytimer[set] = (perset_mytimer[set]+1);
@@ -388,6 +409,9 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             high_cost_queue.push_back(new_interval);
         }
     }
+    else
+        cout << "not sampled" << endl;
+        
 
     bool new_prediction = demand_predictor->get_prediction (ip);
 
@@ -425,6 +449,21 @@ void CACHE::llc_replacement_final_stats()
     unsigned int traffic = 0;
     for(unsigned int i=0; i<LLC_SETS; i++)
     {
+        while(!(low_cost_queues[i].empty()))
+        {
+            Q_ENTRY oldest_lc_entry = low_cost_queues[i].front();
+            uint64_t  start_quanta = oldest_lc_entry.start_quanta;
+            uint64_t  end_quanta = oldest_lc_entry.end_quanta;
+            if(perset_optgen[i].should_cache(end_quanta, start_quanta)) // Yes! 
+            {
+            }
+            else
+            {
+                obol_total_cost += addr_history[oldest_lc_entry.addr].last_miss_cost;
+            }
+            low_cost_queues[i].pop_front();
+        }
+        
         accesses += perset_optgen[i].access;
         hits += perset_optgen[i].get_num_opt_hits();
         traffic += perset_optgen[i].get_traffic();
@@ -433,6 +472,7 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "OPTgen accesses: " << accesses << std::endl;
     std::cout << "OPTgen hits: " << hits << std::endl;
     std::cout << "OPTgen hit rate: " << 100*(double)hits/(double)accesses << std::endl;
+    std::cout << "OPTgen cost: " << obol_total_cost << std::endl;
     std::cout << "Traffic: " << traffic << " " << 100*(double)traffic/(double)accesses << std::endl;
     double prediction_accuracy = 100*(double)hawkeye_accuracy/(double)hawkeye_predictions;
     std::cout << "Hawkeye accuracy: " << hawkeye_accuracy << " out of " << hawkeye_predictions << " : " << prediction_accuracy << std::endl;
