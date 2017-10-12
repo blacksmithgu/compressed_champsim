@@ -19,6 +19,7 @@ uint64_t warmup_instructions     = 1000000,
 time_t start_time;
 
 string outputDecisionFile;
+string accessHistoryFile;
 
 // PAGE TABLE
 uint32_t PAGE_TABLE_LATENCY = 0, SWAP_LATENCY = 0;
@@ -476,6 +477,7 @@ int main(int argc, char** argv)
             {"low_bandwidth",  no_argument, 0, 'b'},
             {"traces",  no_argument, 0, 't'},
             {"output_decision", required_argument, 0, 'd'},
+            {"access_history", required_argument, 0, 'a'},
             {0, 0, 0, 0}      
         };
 
@@ -511,6 +513,9 @@ int main(int argc, char** argv)
                 break;
             case 'd':
                 outputDecisionFile.assign(optarg);
+                break;
+            case 'a':
+                accessHistoryFile.assign(optarg);
                 break;
             default:
                 abort();
