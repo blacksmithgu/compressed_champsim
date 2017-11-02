@@ -34,11 +34,11 @@
 uint32_t rrpv[LLC_SETS][LLC_WAYS];
 
 #ifndef OBOL_COST_RATIO
-#define OBOL_COST_RATIO 80
+#define OBOL_COST_RATIO 2
 #endif
 
 #ifndef OBOL_COST_THRESHOLD
-#define OBOL_COST_THRESHOLD 80
+#define OBOL_COST_THRESHOLD 160
 #endif
 
 
@@ -188,6 +188,8 @@ void CACHE::llc_initialize_replacement()
 #else
     cout << "Initialize Obol state (sampling disabled)" << endl;
 #endif
+    cout << "Cost ratio: " << OBOL_COST_RATIO << endl;
+    cout << "Cost threshold: " << OBOL_COST_THRESHOLD << endl;
 }
 
 // find replacement victim
@@ -582,6 +584,8 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "Cost contribution of high cost misses: " << high_cost_contribution << std::endl;
     double low_cost_contribution = 100*total_low_cost/total_cost;
     std::cout << "Cost contribution of low cost misses: " << low_cost_contribution << std::endl;
+    std::cout << "Percentage of high cost misses: " << 100*num_high_cost_misses/num_misses << std::endl;
+    std::cout << "Percentage of low cost misses: " << 100*num_low_cost_misses/num_misses << std::endl;
     std::cout << "Average cost of a miss: " << total_cost/num_misses << std::endl;
     std::cout << "Average cost of a high cost miss: " << (double)total_high_cost/num_high_cost_misses << std::endl;
     std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;

@@ -29,11 +29,11 @@
 uint32_t rrpv[LLC_SETS][LLC_WAYS];
 
 #ifndef OBOL_COST_RATIO
-#define OBOL_COST_RATIO 80
+#define OBOL_COST_RATIO 2
 #endif
 
 #ifndef OBOL_COST_THRESHOLD
-#define OBOL_COST_THRESHOLD 80
+#define OBOL_COST_THRESHOLD 160
 #endif
 
 
