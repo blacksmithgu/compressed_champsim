@@ -170,8 +170,8 @@ void simulate_hawkeye_gen(uint32_t set, uint64_t paddr, bool prediction, bool pr
 
 
 
-uint64_t average_latency = 0;
-uint64_t average_latency_count = 0;
+uint64_t average_latency[NUM_CPUS] = {0};
+uint64_t average_latency_count[NUM_CPUS] = {0};
 
 // called on every cache hit and cache fill
 void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
@@ -191,8 +191,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         return;
 
     if(!hit) {
-        average_latency += latency;
-        average_latency_count += 1;
+        average_latency[cpu] += latency;
+        average_latency_count[cpu] += 1;
     }
 
     //If we are sampling, OPTgen will only see accesses from sampled sets
@@ -356,6 +356,9 @@ void CACHE::llc_replacement_final_stats()
     cout << "Hawkeyegen prefetches: " << hawkeyegen_rp << " " << hawkeyegen_prefetches << " " << 100*(double)hawkeyegen_rp/(double)hawkeyegen_prefetches << endl;
  
     cout << endl << endl;
-    cout << "Average latency: " << (double)average_latency/(double)average_latency_count << endl;
+    cout << "Average latency Core 0: " << (double)average_latency[0]/(double)average_latency_count[0] << endl;
+    cout << "Average latency Core 1: " << (double)average_latency[1]/(double)average_latency_count[1] << endl;
+    cout << "Average latency Core 2: " << (double)average_latency[2]/(double)average_latency_count[2] << endl;
+    cout << "Average latency Core 3: " << (double)average_latency[3]/(double)average_latency_count[3] << endl;
     return;
 }

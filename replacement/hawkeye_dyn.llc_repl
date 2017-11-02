@@ -1,0 +1,447 @@
+//Hawkeye Cache Replacement Tool v2.0
+//UT AUSTIN RESEARCH LICENSE (SOURCE CODE)
+//The University of Texas at Austin has developed certain software and documentation that it desires to
+//make available without charge to anyone for academic, research, experimental or personal use.
+//This license is designed to guarantee freedom to use the software for these purposes. If you wish to
+//distribute or make other use of the software, you may purchase a license to do so from the University of
+//Texas.
+///////////////////////////////////////////////
+//                                            //
+//     Hawkeye [Jain and Lin, ISCA' 16]       //
+//     Akanksha Jain, akanksha@cs.utexas.edu  //
+//                                            //
+///////////////////////////////////////////////
+
+// Source code for configs 1 and 2
+
+#include "cache.h"
+#include "uncore.h"
+#include <map>
+#include <cassert>
+
+#define LLC_SETS LLC_SET
+#define LLC_WAYS LLC_WAY
+
+#include "hawkeye_config.h"
+
+#define maxRRPV 7
+uint32_t rrpv[LLC_SETS][LLC_WAYS];
+uint64_t perset_mytimer[LLC_SETS];
+
+uint64_t signatures[LLC_SETS][LLC_WAYS];
+bool prefetched[LLC_SETS][LLC_WAYS];
+
+#define SAMPLED_CACHE_SIZE (2800*NUM_CPUS)
+map<uint64_t, ADDR_INFO> addr_history; // OPT Sampler
+
+vector<HawkeyeConfig> configs;
+#define NUM_CONFIGS 3
+
+#include <math.h>
+#define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
+#define bits(x, i, l) (((x) >> (i)) & bitmask(l))
+
+#define SAMPLING 1
+#ifdef SAMPLING
+    #define SAMPLED_SET(set) (bits(set, 0 , 8) == bits(set, ((unsigned long long)log2(LLC_SETS) - 8), 8) )
+#else
+    #define SAMPLED_SET(set) (true)
+#endif
+
+uint64_t epoch_num = 0;
+//#define EPOCH_LENGTH 200000000
+#define EPOCH_LENGTH 100000000
+
+struct EPOCH
+{
+    uint64_t last_epoch_cycle[NUM_CPUS];
+    uint64_t dram_latency[NUM_CPUS];
+    uint64_t demand_accesses[NUM_CPUS];
+    uint64_t demand_misses[NUM_CPUS];
+    uint64_t traffic[NUM_CPUS];
+    
+    void reset()
+    {
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+        {
+            last_epoch_cycle[i] = current_core_cycle[i];
+            dram_latency[i] = 0;
+            demand_accesses[i] = 0;
+            demand_misses[i] = 0;
+            traffic[i] = 0;
+        }
+    }
+
+    void update_epoch(uint32_t cpu, bool hit, uint32_t type, uint64_t observed_latency)
+    {
+        assert(type != WRITEBACK);
+
+        if(type != PREFETCH)   
+        {
+            demand_accesses[cpu] +=1;
+            if(!hit)
+            {
+                dram_latency[cpu] += observed_latency;
+                demand_misses[cpu] += 1;
+                traffic[cpu] += 1;
+            }
+        }
+        else
+        {
+            if(!hit)
+                traffic[cpu] += 1;
+        }
+    }
+
+    bool is_complete()
+    {
+        bool complete = true;
+        
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+        {
+            uint64_t cycles_elapsed = (current_core_cycle[i] - last_epoch_cycle[i]);
+            if(cycles_elapsed < EPOCH_LENGTH)
+            {
+                complete = false;
+                break;
+            }
+        }
+
+        return complete;
+    }
+
+    double get_average_latency()
+    {
+        double latency_total = 0;
+        double count = 0;
+
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+        {
+            latency_total += dram_latency[i];
+            count += demand_misses[i];
+        }
+
+        double average_latency = latency_total/count;
+        return average_latency;
+    }
+
+    double get_hit_rate(uint32_t cpu)
+    {
+        return ((double)(demand_accesses[cpu] - demand_misses[cpu])/(double)(demand_accesses[cpu]));
+    }
+
+    double get_bw_usage()
+    {
+        double available_bw = get_available_bw();
+        double total_traffic = 0;
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+            total_traffic += traffic[i];
+
+        //assert(total_traffic < available_bw);
+        return (total_traffic/available_bw);
+    }
+
+    double get_available_bw()
+    {
+        double available_bw = (double)(current_core_cycle[0] - last_epoch_cycle[0])/(double)16;
+        return available_bw;   
+    }
+
+    void print()
+    {
+        cout <<"===============================" << endl;
+        cout << current_core_cycle[0] << endl;
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+            cout << get_hit_rate(i) << endl;
+
+        cout << "Average latency: " << get_average_latency() << endl;
+        cout << "Average bw usage: " << get_bw_usage() << endl;
+    }
+};
+
+EPOCH hawkeye_epoch;
+uint32_t curr_config;
+
+// initialize replacement state
+void CACHE::llc_initialize_replacement()
+{
+    for (int i=0; i<LLC_SETS; i++) {
+        for (int j=0; j<LLC_WAYS; j++) {
+            rrpv[i][j] = maxRRPV;
+            signatures[i][j] = 0;
+            prefetched[i][j] = false;
+        }
+        perset_mytimer[i] = 0;
+    }
+
+    addr_history.clear();
+
+    cout << "NUM_CONFIGS " << NUM_CONFIGS << endl;
+    configs.resize(NUM_CONFIGS);
+
+    //TODO: Generalize to any number of cores
+/*    unsigned int cnt = 0;
+    for(unsigned int i=0; i<3; i++) {
+        for(unsigned int j=0; j<3; j++) {
+            for(unsigned int k=0; k<3; k++) {
+                for(unsigned int m=0; m<3; m++) {
+                    assert(cnt < NUM_CONFIGS);
+                    configs[cnt++].init(i, j, k, m);
+                }
+            }
+        }
+    }
+    curr_config = 40;   
+*/
+   
+    configs[0].init(0, 0, 0, 0); 
+    configs[1].init(1, 1, 1, 1); 
+    configs[2].init(2, 2, 2, 2); 
+
+    curr_config = 1;   
+    cout << "Initialize Hawkeye state" << endl;
+    hawkeye_epoch.reset();
+    epoch_num = 0;
+}
+
+// find replacement victim
+// return value should be 0 ~ 15 or 16 (bypass)
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type)
+{
+    // look for the maxRRPV line
+    for (uint32_t i=0; i<LLC_WAYS; i++)
+        if (rrpv[set][i] == maxRRPV)
+            return i;
+
+    //If we cannot find a cache-averse line, we evict the oldest cache-friendly line
+    uint32_t max_rrip = 0;
+    int32_t lru_victim = -1;
+    for (uint32_t i=0; i<LLC_WAYS; i++)
+    {
+        if (rrpv[set][i] >= max_rrip)
+        {
+            max_rrip = rrpv[set][i];
+            lru_victim = i;
+        }
+    }
+
+    assert (lru_victim != -1);
+
+    //TODO
+    //The predictor is trained negatively on LRU evictions
+/*  if( SAMPLED_SET(set) )
+    {
+//        if(prefetched[set][lru_victim])
+//            config1.prefetch_predictor->decrement(signatures[set][lru_victim]);
+//        else
+//            config1.demand_predictor->decrement(signatures[set][lru_victim]);
+
+    }
+*/
+
+
+    return lru_victim;
+
+    // WE SHOULD NOT REACH HERE
+    assert(0);
+    return 0;
+}
+
+void replace_addr_history_element(uint32_t set)
+{
+    uint64_t lru_addr = 0;
+    uint64_t lru_time = 10000000;
+
+    for(map<uint64_t, ADDR_INFO>::iterator it=addr_history.begin(); it != addr_history.end(); it++)
+    {
+        if((it->second).last_quanta < lru_time)
+        {
+            lru_time =  (it->second).last_quanta;
+            lru_addr = it->first;
+        }
+    }
+    assert(lru_addr != 0);
+    addr_history.erase(lru_addr);
+}
+
+uint64_t timer = 0;
+
+uint64_t average_latency = 0;
+uint64_t average_latency_count = 0;
+
+// called on every cache hit and cache fill
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
+{
+    uint64_t paddr = (full_addr >> 6) << 6;
+
+    if(type == PREFETCH)
+    {
+        if (!hit)
+            prefetched[set][way] = true;
+    }
+    else
+        prefetched[set][way] = false;
+
+
+    //First simulate Hawkeye's eviction (and detraining)
+    bool hawkeye_hit[NUM_CONFIGS] = {false};
+    int hawkeye_index[NUM_CONFIGS] = {-1};
+    //if(SAMPLED_SET(set))
+    //{
+        for(unsigned int m=0; m<NUM_CONFIGS; m++)
+        {
+            METADATA* detrain_info = NULL;
+            hawkeye_index[m] = (int)configs[m].hawkeyegen_rrpv_find_index(cpu, paddr, set, type, detrain_info, hawkeye_hit[m]);
+            assert(hawkeye_index[m] < (int)LLC_WAYS);
+            assert(hawkeye_index[m] >= 0);
+            if(detrain_info && SAMPLED_SET(set))
+            {
+                uint64_t evict_pc = detrain_info->pc;
+                bool evict_prefetched = detrain_info->prefetched;
+                configs[m].hawkeye_detrain(evict_prefetched, evict_pc);
+            }
+
+            if(type == WRITEBACK)
+                configs[m].simulate_hawkeyegen_rrpv_wb((uint32_t)hawkeye_index[m], paddr, set);
+        }
+    //}
+
+
+    //Ignore writebacks
+    if (type == WRITEBACK)
+        return;
+
+    hawkeye_epoch.update_epoch(cpu, (bool)hit, type, latency);
+
+    if(!hit) {
+        average_latency += latency;
+        average_latency_count += 1;
+    }
+
+    uint64_t curr_quanta = perset_mytimer[set];
+    if(SAMPLED_SET(set))
+    {
+        //Train OPTgen 
+        int last_quanta = -10;
+        bool last_prefetched = false;
+        uint64_t last_pc = 0;
+        if(addr_history.find(paddr) != addr_history.end()) {
+            last_quanta = addr_history[paddr].last_quanta;
+            last_prefetched = addr_history[paddr].prefetched;
+            last_pc = addr_history[paddr].PC;
+        }
+
+        assert((int)curr_quanta >= last_quanta);
+
+        for(unsigned int m=0; m<NUM_CONFIGS; m++)
+            configs[m].train(set, type, curr_quanta, last_quanta, last_prefetched, last_pc, cpu);
+
+        if(addr_history.find(paddr) == addr_history.end())
+        {
+#ifdef SAMPLING
+            assert(addr_history.size() <= SAMPLED_CACHE_SIZE);
+            if(addr_history.size() == SAMPLED_CACHE_SIZE) 
+                replace_addr_history_element(set);
+
+            assert(addr_history.size() < SAMPLED_CACHE_SIZE);
+#endif
+            addr_history[paddr].init(curr_quanta);
+        }
+
+        bool new_prediction = configs[curr_config].predict(set, type, ip);
+        //Update Addr history
+        addr_history[paddr].update(perset_mytimer[set], ip, new_prediction);
+        if(type == PREFETCH)
+            addr_history[paddr].mark_prefetch(); 
+        else
+            addr_history[paddr].prefetched = false; 
+        addr_history[paddr].lru = 0;
+    }
+
+    //if(SAMPLED_SET(set))
+    //{
+        for(unsigned int m=0; m<NUM_CONFIGS; m++)
+        {
+            bool new_prediction = configs[m].predict(set, type, ip);
+
+            assert(hawkeye_index[m] >= 0);
+            assert(hawkeye_index[m] < LLC_WAYS);
+            configs[m].simulate_hawkeyegen_rrpv((uint32_t)hawkeye_index[m], paddr, set, type, ip, new_prediction, hawkeye_hit[m]);
+        }
+
+    //}
+
+    //Make prediction and update RRPVs
+    //TODO: This shoudl be done for the chosen dynamic config
+    bool new_prediction = configs[curr_config].predict(set, type, ip);
+    signatures[set][way] = ip;
+    perset_mytimer[set] = (perset_mytimer[set]+1);
+
+    //Set RRIP values and age cache-friendly line
+    if(!new_prediction)
+        rrpv[set][way] = maxRRPV;
+    else
+    {
+        rrpv[set][way] = 0;
+        if(!hit)
+        {
+            bool saturated = false;
+            for(uint32_t i=0; i<LLC_WAYS; i++)
+                if (rrpv[set][i] == maxRRPV-1)
+                    saturated = true;
+
+            //Age all the cache-friendly  lines
+            for(uint32_t i=0; i<LLC_WAYS; i++)
+            {
+                if (!saturated && rrpv[set][i] < maxRRPV-1)
+                    rrpv[set][i]++;
+            }
+        }
+        rrpv[set][way] = 0;
+    }
+
+    if(hawkeye_epoch.is_complete())
+    {
+        double improvement[NUM_CONFIGS] = {0.0};
+        double max_improvement = 0;
+        uint32_t best_config = curr_config;
+
+        hawkeye_epoch.print();
+        for(unsigned int m=0; m<NUM_CONFIGS; m++)
+        {
+            cout << epoch_num << " Config " << m << endl;
+            double hit_rate[NUM_CPUS] = {0.0};
+            for(unsigned int i=0; i<NUM_CPUS; i++)
+                hit_rate[i] = hawkeye_epoch.get_hit_rate(i);
+
+            improvement[m] = configs[m].get_improvement(hit_rate, hawkeye_epoch.get_bw_usage(), hawkeye_epoch.get_average_latency(), hawkeye_epoch.get_available_bw());
+            configs[m].reset_stats();
+            cout << m << ": " << improvement[m] << endl;
+            if(improvement[m] > max_improvement)
+            {
+                max_improvement = improvement[m];
+                best_config = m;
+            }
+        }
+
+        curr_config = best_config;
+        cout << endl << "Best config: " << best_config << " " << max_improvement << endl;
+        hawkeye_epoch.reset();
+        epoch_num++;
+    }
+}
+
+// use this function to print out your own stats at the end of simulation
+void CACHE::llc_replacement_final_stats()
+{
+    for(unsigned int m=0; m<NUM_CONFIGS; m++)
+    {
+        cout << "Config " << m << ": ";
+        for(unsigned int i=0; i<NUM_CPUS; i++)
+            cout << configs[m].config[i] << " ";
+        cout << endl;
+        configs[m].print();
+    }
+    cout << "Average latency: " << (double)average_latency/(double)average_latency_count << endl;
+    return;
+}
