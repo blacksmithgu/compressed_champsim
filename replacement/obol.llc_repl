@@ -28,14 +28,8 @@
 #define maxRRPV 7
 uint32_t rrpv[LLC_SETS][LLC_WAYS];
 
-#ifndef OBOL_COST_RATIO
-#define OBOL_COST_RATIO 2
-#endif
-
-#ifndef OBOL_COST_THRESHOLD
-#define OBOL_COST_THRESHOLD 160
-#endif
-
+extern unsigned obol_cost_ratio;
+extern unsigned obol_cost_threshold;
 
 uint64_t perset_mytimer[LLC_SETS];
 
@@ -191,7 +185,7 @@ void replace_addr_history_element()
 
 bool is_cost_high(double effective_latency)
 {
-    if (effective_latency > OBOL_COST_THRESHOLD) return true;
+    if (effective_latency > obol_cost_threshold) return true;
     return false;
 }
 
@@ -323,20 +317,20 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                     Q_ENTRY new_interval(paddr, last_quanta, curr_quanta);
                     low_cost_queue.push_back(new_interval);
 
-                    if (low_cost_queue.size() >= OBOL_COST_RATIO) {
+                    if (low_cost_queue.size() >= obol_cost_ratio) {
                         // check if they can offset high cost line
                         uint64_t num_low_cost_candidates = 0;
                         for (auto& low_cost_line : low_cost_queue) {
                             if (optgen.should_cache_tentative(low_cost_line.end_quanta, low_cost_line.start_quanta)) {
                                 ++num_low_cost_candidates;
                             }
-                            if (num_low_cost_candidates == OBOL_COST_RATIO) {
+                            if (num_low_cost_candidates == obol_cost_ratio) {
                                 break;
                             }
                         }
                         optgen.revert_to_checkpoint();
 
-                        if (num_low_cost_candidates == OBOL_COST_RATIO) {
+                        if (num_low_cost_candidates == obol_cost_ratio) {
                             uint64_t num_low_cost_cached = 0;
                             while (!low_cost_queue.empty()) {
                                 auto& low_cost_line = low_cost_queue.front();
@@ -357,7 +351,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                                     }
                                 }
                                 low_cost_queue.pop_front();
-                                if (num_low_cost_cached == OBOL_COST_RATIO) {
+                                if (num_low_cost_cached == obol_cost_ratio) {
                                     break;
                                 }
                             }
@@ -498,7 +492,7 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;
 
     std::cout << "\n\nCache_sets,Associativity,Cost_threshold,Cost_ratio,Benchmark,IPC,Accesses,Hit_rate,High_cost_miss_rate,Low_cost_miss_rate,Total_cost,High_cost_contribution,Low_cost_contribution,Prediction_accuracy\n";
-    std::cout << LLC_SETS << "," << LLC_WAYS << "," << OBOL_COST_THRESHOLD << "," << OBOL_COST_RATIO << ",,," << num_accesses << "," << hit_rate << "," << high_cost_miss_rate << "," << low_cost_miss_rate << "," << (uint64_t)total_cost << "," << high_cost_contribution << "," << low_cost_contribution << "," << prediction_accuracy << "\n\n\n";
+    std::cout << LLC_SETS << "," << LLC_WAYS << "," << obol_cost_threshold << "," << obol_cost_ratio << ",,," << num_accesses << "," << hit_rate << "," << high_cost_miss_rate << "," << low_cost_miss_rate << "," << (uint64_t)total_cost << "," << high_cost_contribution << "," << low_cost_contribution << "," << prediction_accuracy << "\n\n\n";
 
     cout << endl << endl;
     return;

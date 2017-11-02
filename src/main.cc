@@ -20,6 +20,8 @@ time_t start_time;
 
 string outputDecisionFile;
 string accessHistoryFile;
+unsigned obol_cost_ratio = 4;
+unsigned obol_cost_threshold = 160;
 
 // PAGE TABLE
 uint32_t PAGE_TABLE_LATENCY = 0, SWAP_LATENCY = 0;
@@ -478,6 +480,8 @@ int main(int argc, char** argv)
             {"traces",  no_argument, 0, 't'},
             {"output_decision", required_argument, 0, 'd'},
             {"access_history", required_argument, 0, 'a'},
+            {"cost_ratio", required_argument, 0, 'r'},
+            {"cost_threshold", required_argument, 0, 'm'},
             {0, 0, 0, 0}      
         };
 
@@ -516,6 +520,12 @@ int main(int argc, char** argv)
                 break;
             case 'a':
                 accessHistoryFile.assign(optarg);
+                break;
+            case 'r':
+                obol_cost_ratio = atol(optarg);
+                break;
+            case 'm':
+                obol_cost_threshold = atol(optarg);
                 break;
             default:
                 abort();

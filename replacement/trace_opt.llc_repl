@@ -31,11 +31,7 @@ uint64_t total_high_cost;
 uint64_t num_low_cost_misses;
 uint64_t total_low_cost;
 
-#ifndef OBOL_COST_THRESHOLD
-#define OBOL_COST_THRESHOLD 160
-#endif
-
-
+extern unsigned obol_cost_threshold;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -62,12 +58,12 @@ void CACHE::llc_initialize_replacement()
     total_low_cost = 0.0;
 
     cout << "Initialize trace opt: " << outputDecisionFile << endl;
-    cout << "Cost threshold: " << OBOL_COST_THRESHOLD << endl;
+    cout << "Cost threshold: " << obol_cost_threshold << endl;
 }
 
 bool is_cost_high(double effective_latency)
 {
-    if (effective_latency > OBOL_COST_THRESHOLD) return true;
+    if (effective_latency > obol_cost_threshold) return true;
     return false;
 }
 
