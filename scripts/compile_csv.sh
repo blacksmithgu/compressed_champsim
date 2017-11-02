@@ -10,7 +10,7 @@ TRACE_DIR=/scratch/cluster/akanksha/CRCRealTraces
 dut=$1
 
 dir=$(dirname "$0")
-echo "Benchmark, Misses, CPI"
+echo "Benchmark, Misses, Cost, Cycles, IPC"
 for f in ${TRACE_DIR}/*.gz
 do
     benchmark=$(basename "$f")
@@ -20,5 +20,7 @@ do
 
     misses=`perl ${dir}/get_misses.pl $dut_file`
     cpi=`perl ${dir}/get_cpi.pl $dut_file`
-    echo "$benchmark, $misses, $cpi"
+    ipc=`perl ${dir}/get_ipc.pl $dut_file`
+    cost=`perl ${dir}/get_cost.pl $dut_file`
+    echo "$benchmark, $misses, $cost, $cpi, $ipc"
 done
