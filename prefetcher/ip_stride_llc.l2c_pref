@@ -38,12 +38,8 @@ class IP_TRACKER {
         last_stride = 0;
         lru = 0;
     };
-
 };
 
-uint64_t new_stream, page_boundary, stride0, triggers;
-uint64_t l2_prefetch, llc_prefetch, nostride;
-double av_occupancy;
 IP_TRACKER trackers[IP_TRACKER_COUNT];
 
 void CACHE::l2c_prefetcher_initialize() 
@@ -51,23 +47,10 @@ void CACHE::l2c_prefetcher_initialize()
     cout << "CPU " << cpu << " L2C IP-based stride prefetcher" << endl;
     for (int i=0; i<IP_TRACKER_COUNT; i++)
         trackers[i].lru = i;
-
-    new_stream = 0;
-    page_boundary = 0;
-    stride0 = 0;
-    triggers = 0;
-    nostride = 0;
-    l2_prefetch = 0;
-    llc_prefetch = 0;
 }
 
 void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type)
 {
-    if(cache_hit == 0)
-    {
-        av_occupancy += MSHR.occupancy;
-        triggers++;
-    }
     // check for a tracker hit
     uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
 
@@ -89,7 +72,7 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
         trackers[index].last_cl_addr = cl_addr;
         trackers[index].last_stride = 0;
 
-       //cout << "[IP_STRIDE] MISS index: " << index << " lru: " << trackers[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << endl;
+        //cout << "[IP_STRIDE] MISS index: " << index << " lru: " << trackers[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << endl;
 
         for (int i=0; i<IP_TRACKER_COUNT; i++) {
             if (trackers[i].lru < trackers[index].lru)
@@ -97,7 +80,6 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
         }
         trackers[index].lru = 0;
 
-        new_stream++;
         return;
     }
 
@@ -121,16 +103,12 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
 
     // don't do anything if we somehow saw the same address twice in a row
     if (stride == 0)
-    {
-        stride0++;
         return;
-    }
 
     // only do any prefetching if there's a pattern of seeing the same
     // stride more than once
     if (stride == trackers[index].last_stride) {
 
-    //cout << cpu << " " << (uint32_t)MSHR.occupancy << endl;
         // do some prefetching
         for (int i=0; i<PREFETCH_DEGREE; i++) {
             uint64_t pf_address = (cl_addr + (stride*(i+1))) << LOG2_BLOCK_SIZE;
@@ -138,27 +116,14 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
             // only issue a prefetch if the prefetch address is in the same 4 KB page 
             // as the current demand access address
             if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
-            {
-                page_boundary++;
                 break;
-            }
 
             // check the MSHR occupancy to decide if we're going to prefetch to the L2 or LLC
             if (MSHR.occupancy < (MSHR.SIZE>>1))
-            {
-                l2_prefetch++;
-                prefetch_line(ip, addr, pf_address, FILL_L2);
-            }
-            else
-            {
-                llc_prefetch++;
                 prefetch_line(ip, addr, pf_address, FILL_LLC);
-            }
+            else
+                prefetch_line(ip, addr, pf_address, FILL_LLC);
         }
-    }
-    else
-    {
-        nostride++;
     }
 
     trackers[index].last_cl_addr = cl_addr;
@@ -178,14 +143,5 @@ void CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
 
 void CACHE::l2c_prefetcher_final_stats()
 {
-    cout << "Triggers: " << triggers << endl;
-    cout << "New Stream: " << new_stream << endl;
-    cout << "Page boundary: " << page_boundary << endl;
-    cout << "Stride 0 " << stride0 << endl;
-    cout << "No Stride " << nostride << endl;
-    cout << "L2 prefetch " << l2_prefetch << endl;
-    cout << "LLC prefetch " << llc_prefetch << endl;
-    cout << "Average MSHR occupancy " << av_occupancy/(double)triggers << endl;
-
     cout << "CPU " << cpu << " L2C PC-based stride prefetcher final stats" << endl;
 }
