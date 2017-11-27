@@ -26,7 +26,7 @@ struct HAWKEYEgen
 {
     vector<uint64_t> tag;
     vector<uint32_t> rrpv;  
-    vector<uint32_t> epoch;
+    vector<int> epoch;
     vector<METADATA> metadata;  
     uint64_t evict_addr;
     
@@ -41,7 +41,7 @@ struct HAWKEYEgen
     {
         rrpv.resize(size, 7);
         tag.resize(size, 0);
-        epoch.resize(size, 0);
+        epoch.resize(size, -1);
         metadata.resize(size);
         evict_addr = 0;
 
@@ -121,7 +121,7 @@ struct HAWKEYEgen
         metadata[index].prefetched = false;
     }
 
-    uint32_t get_victim(METADATA*& info, uint32_t& feedback_epoch)
+    uint32_t get_victim(METADATA*& info, int& feedback_epoch)
     {
         bool cache_averse_found = false;
         int evict_index = -1;
@@ -157,7 +157,7 @@ struct HAWKEYEgen
         return evict_index;
     }
 
-    int check_hit(uint64_t paddr, uint32_t type, uint32_t& feedback_epoch)
+    int check_hit(uint64_t paddr, uint32_t type, int& feedback_epoch)
     {
         for(uint32_t i=0; i<tag.size(); i++)
         {
