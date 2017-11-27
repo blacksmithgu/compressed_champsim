@@ -50,6 +50,16 @@ class HAWKEYE_PC_PREDICTOR
 
     }
 
+    void saturate (uint64_t pc)
+    {
+        uint64_t signature = CRC(pc) % SHCT_SIZE;
+        assert(SHCT.find(signature) != SHCT.end());
+
+        SHCT[signature] = MAX_SHCT;
+
+    }
+
+
     void decrement (uint64_t pc)
     {
         uint64_t signature = CRC(pc) % SHCT_SIZE;
@@ -67,5 +77,99 @@ class HAWKEYE_PC_PREDICTOR
         return true;
     }
 };
+
+class HAWKEYE_IDEALPC_PREDICTOR
+{
+    map<uint64_t, uint32_t> detraining_count;
+    map<uint64_t, uint32_t> training_count;
+    map<uint64_t, uint32_t> prediction_count;
+    map<uint64_t, uint32_t> positive_count;
+    map<uint64_t, uint32_t> negative_count;
+
+    public:
+    void increment (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+        {
+            detraining_count[pc] = 0;
+            training_count[pc] = 0;
+            positive_count[pc] = 0;
+            negative_count[pc] = 0;
+        }
+
+        training_count[pc]++;
+        positive_count[pc]++;
+    }
+
+    void decrement (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+        {
+            detraining_count[pc] = 0;
+            training_count[pc] = 0;
+            prediction_count[pc] = 0;
+            positive_count[pc] = 0;
+            negative_count[pc] = 0;
+        }
+
+        training_count[pc]++;
+        negative_count[pc]++;
+    }
+
+    void detrain (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+        {
+            detraining_count[pc] = 0;
+            training_count[pc] = 0;
+            prediction_count[pc] = 0;
+            positive_count[pc] = 0;
+            negative_count[pc] = 0;
+        }
+
+        detraining_count[pc]++;
+    }
+
+
+    bool get_prediction (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+            return true;
+
+        if(training_count[pc] == 0)
+            return true;
+        //cout << "Prediction: "<< hex << PC << " " << training_count[PC] << " " << (positive_count[PC] >= negative_count[PC]) << endl;
+        //if(positive_count[pc] >= negative_count[pc])
+        if(positive_count[pc] >= (detraining_count[pc] + negative_count[pc]))
+            return true;
+        return false;
+    }
+
+    double get_probability (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+            return 2; 
+
+        if(training_count[pc] == 0)
+            return 2;
+        //cout << "Prediction: "<< hex << PC << " " << training_count[PC] << " " << (positive_count[PC] >= negative_count[PC]) << endl;
+        return ((double)positive_count[pc]/(double)(training_count[pc]));
+
+    }
+
+    double get_detrain_probability (uint64_t pc)
+    {
+        if(training_count.find(pc) == training_count.end())
+            return 2; 
+
+        if(training_count[pc] == 0)
+            return 2;
+        //cout << "Prediction: "<< hex << PC << " " << training_count[PC] << " " << (positive_count[PC] >= negative_count[PC]) << endl;
+        return ((double)positive_count[pc]/(double)(training_count[pc] + detraining_count[pc]));
+
+    }
+
+};
+
 
 #endif
