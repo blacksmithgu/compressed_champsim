@@ -47,6 +47,7 @@ uint64_t total_prefetch_downgrades;
 //Sample 64 sets per core
 #define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SET) - 6), 6) )
 
+#define PD_OPTIMIZATION
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -121,6 +122,9 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             if( (type == PREFETCH) && is_prefetch[set][way] ) //redundant prefetch
             {
 //                line_rrpv[set][way] = 0;
+#ifndef PD_OPTIMIZATION
+                line_rrpv[set][way] = 0;
+#endif
                 
                 //if( (ship_sample[set] == 1) && ((rand()%100 <5) || (get_config_number()==4))) 
                 if( (ship_sample[set] == 1) && ((rand()%100 <5) || (NUM_CPUS==4))) 
@@ -138,11 +142,12 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 //P-D interval (indicates that it can be prefetched again if desired, so set RRPV to 3)
                 if( is_prefetch[set][way] ) 
                 {
-                    line_rrpv[set][way] = maxRRPV;
-                    is_prefetch[set][way] = FALSE;
+#ifdef PD_OPTIMIZATION
                     total_prefetch_downgrades++;
+                    line_rrpv[set][way] = maxRRPV;
+#endif
+                    is_prefetch[set][way] = FALSE;
                 }
-
                 if( (ship_sample[set] == 1) && (line_reuse[set][way]==0) ) 
                 {
                     uint32_t fill_cpu = fill_core[set][way];
