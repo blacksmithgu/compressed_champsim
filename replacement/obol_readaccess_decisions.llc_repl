@@ -19,6 +19,11 @@
 #include <cassert>
 #include <vector>
 #include <deque>
+#include <fstream>
+#include <boost/serialization/map.hpp>
+#include <boost/serialization/vector.hpp>
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
 
 #define NUM_CORE 1
 #define LLC_SETS NUM_CORE*2048
@@ -53,7 +58,7 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
 #define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
 #define bits(x, i, l) (((x) >> (i)) & bitmask(l))
 
-#define SAMPLING
+//#define SAMPLING
 //Sample 64 sets per core
 #ifdef SAMPLING
     #define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SETS) - 6), 6) )
@@ -65,6 +70,33 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
 // 2800 entris * 4 bytes per entry = 11.2KB
 #define SAMPLED_CACHE_SIZE 2800
 map<uint64_t, ADDR_INFO> addr_history; // Sampler
+
+extern string outputDecisionFile;
+map<uint64_t, vector<bool> > decisions;
+
+extern string accessHistoryFile;
+
+struct H_ENTRY {
+  bool hit;
+  uint64_t latency;
+  uint64_t effective_latency;
+
+  H_ENTRY() : hit(true), latency(0), effective_latency(0) {}
+
+  H_ENTRY(bool _hit, uint64_t _latency, uint64_t _effective_latency) {
+    hit = _hit;
+    latency = _latency;
+    effective_latency = _effective_latency;
+  }
+
+  template<typename Archive>
+  void serialize(Archive& ar, const unsigned version) {
+    ar & hit & latency & effective_latency;  // Simply serialize the data members of Obj
+  }
+};
+map<uint64_t, vector<H_ENTRY> > access_history;
+map<uint64_t, uint64_t> access_count;
+
 
 struct Q_ENTRY
 {
@@ -90,15 +122,30 @@ uint32_t addr_history_miss;
 uint32_t hawkeye_accuracy;
 uint32_t mytimer;
 uint64_t num_hits;
+uint64_t num_unknown_hits;
 uint64_t obol_total_cost;
 uint64_t num_high_cost_misses;
 uint64_t total_high_cost;
 uint64_t num_low_cost_misses;
 uint64_t total_low_cost;
+uint64_t num_mismatched_misses;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
 {
+    {
+        map<uint64_t, vector<H_ENTRY> > pc_history;
+        assert(!accessHistoryFile.empty());
+        ifstream trace(accessHistoryFile, ios::in | ios::binary);
+        boost::archive::binary_iarchive iarch(trace);
+        iarch & access_history & pc_history;
+        trace.close();
+
+        for (auto& it : access_history) {
+          access_count[it.first] = 0;
+        }
+    }
+
     for (int i=0; i<LLC_SETS; i++) {
         for (int j=0; j<LLC_WAYS; j++) {
             rrpv[i][j] = maxRRPV;
@@ -122,16 +169,21 @@ void CACHE::llc_initialize_replacement()
     mytimer = 0;
 
     num_hits = 0;
+    num_unknown_hits = 0;
     num_high_cost_misses = 0;
     total_high_cost = 0.0;
     num_low_cost_misses = 0;
     total_low_cost = 0.0;
+    num_mismatched_misses = 0;
     obol_total_cost = 0;
 #ifdef SAMPLING
+    assert(0);
     cout << "Initialize Obol state" << endl;
 #else
     cout << "Initialize Obol state (sampling disabled)" << endl;
 #endif
+    cout << "Cost ratio: " << obol_cost_ratio << endl;
+    cout << "Cost threshold: " << obol_cost_threshold << endl;
 }
 
 // find replacement victim
@@ -195,20 +247,49 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
     uint64_t paddr = (full_addr >> 6) << 6;
     if (type == WRITEBACK)
         return;
+
+    auto it = decisions.find(paddr);
+    if (it == decisions.end()) {
+      decisions[paddr] = vector<bool>();
+    }
     
+    bool history_found = access_history.find(paddr) != access_history.end();
+    if (history_found) assert(access_count.find(paddr) != access_count.end());
+
     // statistics
     if (hit) {
         assert(effective_latency == 0.0);
+        if (history_found) {
+          auto index = access_count[paddr];
+          if (index >= access_history[paddr].size()) {
+            ++num_unknown_hits;
+            index = access_history[paddr].size() - 1;
+          }
+          effective_latency = access_history[paddr][index].effective_latency;
+        } else {
+          ++num_unknown_hits;
+        }
         ++num_hits;
     } else {
-        if (is_cost_high(effective_latency)) {
+        bool is_high_cost = is_cost_high(effective_latency);
+        if (is_high_cost) {
             ++num_high_cost_misses;
             total_high_cost += effective_latency;
         } else {
             ++num_low_cost_misses;
             total_low_cost += effective_latency;
         }
+        if (history_found) {
+          auto index = access_count[paddr];
+          if (index < access_history[paddr].size()) {
+            auto predicted_latency = access_history[paddr][index].effective_latency;
+            if (is_high_cost != is_cost_high(predicted_latency)) {
+              ++num_mismatched_misses;
+            }
+          }
+        }
     }
+    if (history_found) ++access_count[paddr];
 
 
     mytimer++;
@@ -232,11 +313,6 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             is_high_cost = is_high_cost_predicted;
 #else
             is_high_cost = is_cost_high(effective_latency);
-            //assert(addr_history[paddr].last_miss_cost != 0);
-            if(hit)
-                is_high_cost = is_cost_high(addr_history[paddr].last_miss_cost);
-
-            //cout << effective_latency << " " << is_high_cost << " " << is_high_cost_predicted << endl;
             if (!is_high_cost && is_high_cost_predicted) { // false negative prediction
                 // remove from the high-cost queue
                 for (auto it = high_cost_queue.begin(); it != high_cost_queue.end(); ++it) {
@@ -254,6 +330,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 if(optgen.should_cache(curr_quanta, last_quanta))
                 {
                     demand_predictor->increment(addr_history[paddr].PC);
+                    decisions[paddr].push_back(true);
                     if(addr_history[paddr].last_prediction)
                         hawkeye_accuracy++;
                 }
@@ -261,10 +338,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 {
                     //Train the predictor negatively because OPT would not have cached this line
                     demand_predictor->decrement(addr_history[paddr].PC);
+                    decisions[paddr].push_back(false);
                     if(addr_history[paddr].last_prediction == false)
                         hawkeye_accuracy++;
 
-                    obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
+                    obol_total_cost += effective_latency;
                 }
 
 
@@ -283,12 +361,14 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                         if (optgen.should_cache(low_cost_line.end_quanta, low_cost_line.start_quanta)) {
                             if (addr_history.find(low_cost_line.addr) != addr_history.end()) {
                                 demand_predictor->increment(addr_history[low_cost_line.addr].PC);
+                                decisions[low_cost_line.addr].push_back(true);
                                 if(addr_history[low_cost_line.addr].last_prediction)
                                     hawkeye_accuracy++;
                             }
                         } else {
                             if (addr_history.find(low_cost_line.addr) != addr_history.end()) {
                                 demand_predictor->decrement(addr_history[low_cost_line.addr].PC);
+                                decisions[low_cost_line.addr].push_back(false);
                                 if(addr_history[low_cost_line.addr].last_prediction == false)
                                     hawkeye_accuracy++;
                                 obol_total_cost += addr_history[low_cost_line.addr].last_miss_cost;
@@ -304,14 +384,16 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                     assert(low_cost_queue.empty());
                     if (optgen.should_cache(curr_quanta, last_quanta)) {
                         demand_predictor->increment(addr_history[paddr].PC);
+                        decisions[paddr].push_back(true);
                         if(addr_history[paddr].last_prediction)
                             hawkeye_accuracy++;
                     } else {
                         demand_predictor->decrement(addr_history[paddr].PC);
+                        decisions[paddr].push_back(false);
                         if(addr_history[paddr].last_prediction == false)
                             hawkeye_accuracy++;
                     
-                        obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
+                        obol_total_cost += effective_latency;
                     }
                 } else { // competing with high_cost line
                     Q_ENTRY new_interval(paddr, last_quanta, curr_quanta);
@@ -338,12 +420,14 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                                     ++num_low_cost_cached;
                                     if (addr_history.find(low_cost_line.addr) != addr_history.end()) {
                                         demand_predictor->increment(addr_history[low_cost_line.addr].PC);
+                                        decisions[low_cost_line.addr].push_back(true);
                                         if(addr_history[low_cost_line.addr].last_prediction)
                                             hawkeye_accuracy++;
                                     }
                                 } else {
                                     if (addr_history.find(low_cost_line.addr) != addr_history.end()) {
                                         demand_predictor->decrement(addr_history[low_cost_line.addr].PC);
+                                        decisions[low_cost_line.addr].push_back(false);
                                         if(addr_history[low_cost_line.addr].last_prediction == false)
                                             hawkeye_accuracy++;
                                 
@@ -376,7 +460,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             //Initialize a new entry in the sampler
             addr_history[paddr].init(curr_quanta);
             optgen.add_access(curr_quanta);
-            obol_total_cost += ((hit) ? (addr_history[paddr].last_miss_cost) : (effective_latency));
+            obol_total_cost += effective_latency;
         }
 
         bool is_next_high_cost;
@@ -392,8 +476,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         // Update the sampler with the timestamp, PC and our prediction
         addr_history[paddr].update(curr_quanta, ip, new_prediction, is_next_high_cost);
         addr_history[paddr].lru = 0;
-        if(!hit)
-            addr_history[paddr].last_miss_cost = effective_latency;
+        addr_history[paddr].last_miss_cost = effective_latency;
 
         //Increment the set timer
         perset_mytimer[set] = (perset_mytimer[set]+1);
@@ -438,6 +521,14 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 // use this function to print out your own stats at the end of simulation
 void CACHE::llc_replacement_final_stats()
 {
+    if (!outputDecisionFile.empty()) {
+      ofstream decisionOutput(outputDecisionFile, ios::out | ios::binary);
+      boost::archive::binary_oarchive oarch(decisionOutput);
+      oarch << decisions;
+      decisionOutput.close();
+      cout << "Decisions written to: " << outputDecisionFile << endl;
+    }
+
     unsigned int hits = 0;
     unsigned int accesses = 0;
     unsigned int traffic = 0;
@@ -487,9 +578,16 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "Cost contribution of high cost misses: " << high_cost_contribution << std::endl;
     double low_cost_contribution = 100*total_low_cost/total_cost;
     std::cout << "Cost contribution of low cost misses: " << low_cost_contribution << std::endl;
+    std::cout << "Percentage of high cost misses: " << 100*num_high_cost_misses/num_misses << std::endl;
+    std::cout << "Percentage of low cost misses: " << 100*num_low_cost_misses/num_misses << std::endl;
     std::cout << "Average cost of a miss: " << total_cost/num_misses << std::endl;
     std::cout << "Average cost of a high cost miss: " << (double)total_high_cost/num_high_cost_misses << std::endl;
     std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;
+
+    double unknown_hit_rate = 100 * (double) num_unknown_hits / num_hits;
+    std::cout << "Percentages of hits whose cost was not known: " << unknown_hit_rate << std::endl;
+    double mismatched_rate = 100 * (double) num_mismatched_misses / num_misses;
+    std::cout << "Percentages of misses whose cost did not match: " << mismatched_rate << std::endl;
 
     std::cout << "\n\nCache_sets,Associativity,Cost_threshold,Cost_ratio,Benchmark,IPC,Accesses,Hit_rate,High_cost_miss_rate,Low_cost_miss_rate,Total_cost,High_cost_contribution,Low_cost_contribution,Prediction_accuracy\n";
     std::cout << LLC_SETS << "," << LLC_WAYS << "," << obol_cost_threshold << "," << obol_cost_ratio << ",,," << num_accesses << "," << hit_rate << "," << high_cost_miss_rate << "," << low_cost_miss_rate << "," << (uint64_t)total_cost << "," << high_cost_contribution << "," << low_cost_contribution << "," << prediction_accuracy << "\n\n\n";

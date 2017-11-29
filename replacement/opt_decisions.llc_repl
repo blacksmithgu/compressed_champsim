@@ -68,6 +68,19 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
 #define SAMPLED_CACHE_SIZE 2800
 map<uint64_t, ADDR_INFO> addr_history; // Sampler
 
+uint64_t num_hits;
+uint64_t num_high_cost_misses;
+uint64_t total_high_cost;
+uint64_t num_low_cost_misses;
+uint64_t total_low_cost;
+
+extern unsigned obol_cost_threshold;
+
+bool is_cost_high(double effective_latency)
+{
+    if (effective_latency > obol_cost_threshold) return true;
+    return false;
+}
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -85,7 +98,14 @@ void CACHE::llc_initialize_replacement()
 
     demand_predictor = new HAWKEYE_PC_PREDICTOR();
 
+    num_hits = 0;
+    num_high_cost_misses = 0;
+    total_high_cost = 0.0;
+    num_low_cost_misses = 0;
+    total_low_cost = 0.0;
+
     cout << "Initialize Hawkeye state" << endl;
+    cout << "Cost threshold: " << obol_cost_threshold << endl;
 }
 
 // find replacement victim
@@ -148,6 +168,19 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
     auto it = decisions.find(paddr);
     if (it == decisions.end()) {
       decisions[paddr] = vector<bool>();
+    }
+
+    if (hit) {
+        assert(effective_latency == 0.0);
+        ++num_hits;
+    } else {
+        if (is_cost_high(effective_latency)) {
+            ++num_high_cost_misses;
+            total_high_cost += effective_latency;
+        } else {
+            ++num_low_cost_misses;
+            total_low_cost += effective_latency;
+        }
     }
    
 
@@ -245,7 +278,18 @@ if (!outputDecisionFile.empty()) {
       cout << "Decisions written to: " << outputDecisionFile << endl;
     }
 
-
+    double num_misses = num_high_cost_misses + num_low_cost_misses;
+    double total_cost = total_high_cost+total_low_cost;
+    std::cout << "Total cost: " << (uint64_t)total_cost << std::endl;
+    double high_cost_contribution = 100*total_high_cost/total_cost;
+    std::cout << "Cost contribution of high cost misses: " << high_cost_contribution << std::endl;
+    double low_cost_contribution = 100*total_low_cost/total_cost;
+    std::cout << "Cost contribution of low cost misses: " << low_cost_contribution << std::endl;
+    std::cout << "Percentage of high cost misses: " << 100*num_high_cost_misses/num_misses << std::endl;
+    std::cout << "Percentage of low cost misses: " << 100*num_low_cost_misses/num_misses << std::endl;
+    std::cout << "Average cost of a miss: " << total_cost/num_misses << std::endl;
+    std::cout << "Average cost of a high cost miss: " << (double)total_high_cost/num_high_cost_misses << std::endl;
+    std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;
 
     unsigned int hits = 0;
     unsigned int accesses = 0;

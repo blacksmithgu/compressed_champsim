@@ -31,11 +31,7 @@ uint64_t total_high_cost;
 uint64_t num_low_cost_misses;
 uint64_t total_low_cost;
 
-#ifndef OBOL_COST_THRESHOLD
-#define OBOL_COST_THRESHOLD 80
-#endif
-
-
+extern unsigned obol_cost_threshold;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -61,11 +57,13 @@ void CACHE::llc_initialize_replacement()
     num_low_cost_misses = 0;
     total_low_cost = 0.0;
 
+    cout << "Initialize trace opt: " << outputDecisionFile << endl;
+    cout << "Cost threshold: " << obol_cost_threshold << endl;
 }
 
 bool is_cost_high(double effective_latency)
 {
-    if (effective_latency > OBOL_COST_THRESHOLD) return true;
+    if (effective_latency > obol_cost_threshold) return true;
     return false;
 }
 
@@ -147,12 +145,14 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 void CACHE::llc_replacement_final_stats()
 {
     double num_misses = num_high_cost_misses + num_low_cost_misses;
-double total_cost = total_high_cost+total_low_cost;
+    double total_cost = total_high_cost+total_low_cost;
     std::cout << "Total cost: " << (uint64_t)total_cost << std::endl;
     double high_cost_contribution = 100*total_high_cost/total_cost;
     std::cout << "Cost contribution of high cost misses: " << high_cost_contribution << std::endl;
     double low_cost_contribution = 100*total_low_cost/total_cost;
     std::cout << "Cost contribution of low cost misses: " << low_cost_contribution << std::endl;
+    std::cout << "Percentage of high cost misses: " << 100*num_high_cost_misses/num_misses << std::endl;
+    std::cout << "Percentage of low cost misses: " << 100*num_low_cost_misses/num_misses << std::endl;
     std::cout << "Average cost of a miss: " << total_cost/num_misses << std::endl;
     std::cout << "Average cost of a high cost miss: " << (double)total_high_cost/num_high_cost_misses << std::endl;
     std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;
