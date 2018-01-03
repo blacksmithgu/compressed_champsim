@@ -181,9 +181,17 @@ class HAWKEYE_PAIRPC_PREDICTOR
     map<uint64_t, map<pair<uint64_t, uint64_t>, uint32_t> > negative_count;
 
     public:
+    HAWKEYE_PAIRPC_PREDICTOR()
+    {
+        baseline_hawkeye_predictor = new HAWKEYE_IDEALPC_PREDICTOR();
+    }
+
     void increment (uint64_t pc, vector<uint64_t> pc_history)
     {
         baseline_hawkeye_predictor->increment(pc);
+        if(pc_history.size() == 0)
+            return;
+
         if(training_count.find(pc) == training_count.end())
         {
             training_count[pc].clear();
@@ -204,7 +212,7 @@ class HAWKEYE_PAIRPC_PREDICTOR
             }
         }
 
-        cout << hex << pc << " " << dec << training_count[pc].size() << endl;
+//        cout << hex << pc << " " << dec << training_count[pc].size() << endl;
         for(set<pair<uint64_t, uint64_t> >::iterator it=pair_list.begin(); it != pair_list.end(); it++)
         {
          //   cout << hex << (*it).first << " " << (*it).second << dec << endl;
@@ -224,6 +232,8 @@ class HAWKEYE_PAIRPC_PREDICTOR
     void decrement (uint64_t pc, vector<uint64_t> pc_history)
     {
         baseline_hawkeye_predictor->decrement(pc);
+        if(pc_history.size() == 0)
+            return;
         if(training_count.find(pc) == training_count.end())
         {
             training_count[pc].clear();
@@ -266,6 +276,8 @@ class HAWKEYE_PAIRPC_PREDICTOR
     bool get_prediction (uint64_t pc, vector<uint64_t> pc_history)
     {
         bool baseline_prediction = baseline_hawkeye_predictor->get_prediction(pc);
+        if(pc_history.size() <= 1)
+            return baseline_prediction;
 
         if(training_count.find(pc) == training_count.end())
             return true; 
@@ -309,38 +321,7 @@ class HAWKEYE_PAIRPC_PREDICTOR
 
     double get_probability (uint64_t pc, vector<uint64_t> pc_history)
     {
-        if(training_count.find(pc) == training_count.end())
-            return 2; 
-
-        sort(pc_history.begin(), pc_history.end());
-
-        set<pair<uint64_t, uint64_t> > pair_list;
-        for(unsigned int i=0; i<pc_history.size()-1; i++)
-        {
-            for(unsigned int j=i+1; j<pc_history.size(); j++)
-            {
-                pair<uint64_t, uint64_t> new_pair = make_pair(pc_history[i], pc_history[j]);
-                if(pair_list.find(new_pair) == pair_list.end())
-                    pair_list.insert(new_pair);
-            }
-        }
-
-        uint32_t train_count, pos_count =0;
-        for(set<pair<uint64_t, uint64_t> >::iterator it=pair_list.begin(); it != pair_list.end(); it++)
-        {
-            if(training_count[pc].find(*it) == training_count[pc].end())
-            {
-                train_count += training_count[pc][*it];
-                pos_count += positive_count[pc][*it];
-            }
-        }
-
-
-        if(train_count == 0)
-            return 2;
-
-        //cout << "Prediction: "<< hex << PC << " " << training_count[PC] << " " << (positive_count[PC] >= negative_count[PC]) << endl;
-        return ((double)pos_count/(double)(train_count));
+        return 0.0;
     }
 
 };
