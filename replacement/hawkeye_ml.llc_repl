@@ -60,6 +60,7 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
     #define SAMPLED_SET(set) (true)
 #endif
 
+unsigned int accurate, inaccurate;
 // Sampler to track 8x cache history for sampled sets
 // 2800 entris * 4 bytes per entry = 11.2KB
 #define SAMPLED_CACHE_SIZE 2800
@@ -85,6 +86,8 @@ void CACHE::llc_initialize_replacement()
     demand_predictor = new HAWKEYE_PAIRPC_PREDICTOR();
 
     cout << "Initialize Hawkeye state" << endl;
+    accurate = 0;
+    inaccurate = 0;
 }
 
 // find replacement victim
@@ -169,19 +172,25 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             if( perset_optgen[set].should_cache(curr_quanta, last_quanta))
             {
                 demand_predictor->increment(addr_history[paddr].PC, addr_history[paddr].context);
-                if(addr_history[paddr].last_prediction == 1)
-                    accurate++;
-                else
-                    inaccurate++;
+                if(warmup_complete[cpu])
+                {
+                    if(addr_history[paddr].last_prediction == 1)
+                        accurate++;
+                    else
+                        inaccurate++;
+                }
             }
             else
             {
                 //Train the predictor negatively because OPT would not have cached this line
                 demand_predictor->decrement(addr_history[paddr].PC, addr_history[paddr].context);
-                if(addr_history[paddr].last_prediction == 0)
-                    accurate++;
-                else
-                    inaccurate++;
+                if(warmup_complete[cpu])
+                {
+                    if(addr_history[paddr].last_prediction == 0)
+                        accurate++;
+                    else
+                        inaccurate++;
+                }
             }
             //Some maintenance operations for OPTgen
             perset_optgen[set].add_access(curr_quanta);
@@ -267,6 +276,7 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "OPTgen hit rate: " << 100*(double)hits/(double)accesses << std::endl;
     std::cout << "Traffic: " << traffic << " " << 100*(double)traffic/(double)accesses << std::endl;
 
+    std::cout << "Accuracy: " << 100*(double)accurate/(double)(accurate + inaccurate) << " " << accurate << " " << (accurate + inaccurate) << endl;
     cout << endl << endl;
     return;
 }

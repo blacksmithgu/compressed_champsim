@@ -644,16 +644,21 @@ void CACHE::handle_prefetch()
             // access cache
             uint32_t set = get_set(PQ.entry[index].address);
             int way = check_hit(&PQ.entry[index]);
+            bool fake_hit = false; //only llc
+            if (cache_type == IS_LLC) 
+                fake_hit = is_fake_hit(PQ.entry[index].address);
             
-            if (way >= 0) { // prefetch hit
+            if ((way >= 0) || fake_hit) { // prefetch hit
 
                 // update replacement policy
                 if (cache_type == IS_LLC) {
-                    llc_update_replacement_state(prefetch_cpu, set, way, block[set][way].full_addr, PQ.entry[index].ip, 0, PQ.entry[index].type, 1, 0, 0);
-
+                    if(way >= 0)
+                        llc_update_replacement_state(prefetch_cpu, set, way, block[set][way].full_addr, PQ.entry[index].ip, 0, PQ.entry[index].type, 1, 0, 0);
                 }
-                else
+                else {
                     update_replacement_state(prefetch_cpu, set, way, block[set][way].full_addr, PQ.entry[index].ip, 0, PQ.entry[index].type, 1);
+                    assert(!fake_hit);
+                }
 
                 // COLLECT STATS
                 sim_hit[prefetch_cpu][PQ.entry[index].type]++;
