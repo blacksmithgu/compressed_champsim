@@ -3,8 +3,8 @@
 
 #include <map>
 
-#define STREAM_MAX_LENGTH 256
-#define STREAM_MAX_LENGTH_BITS 8
+#define STREAM_MAX_LENGTH 1024
+#define STREAM_MAX_LENGTH_BITS 10
 
 //#define DEBUG
 
