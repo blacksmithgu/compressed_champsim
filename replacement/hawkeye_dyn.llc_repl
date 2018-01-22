@@ -35,7 +35,7 @@ bool prefetched[LLC_SETS][LLC_WAYS];
 map<uint64_t, ADDR_INFO> addr_history; // OPT Sampler
 
 vector<HawkeyeConfig> configs;
-#define NUM_CONFIGS 3
+#define NUM_CONFIGS 81 
 
 #include <math.h>
 #define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
@@ -48,7 +48,7 @@ vector<HawkeyeConfig> configs;
     #define SAMPLED_SET(set) (true)
 #endif
 
-uint64_t epoch_num = 0;
+uint64_t epoch_num;
 //#define EPOCH_LENGTH 200000000
 #define EPOCH_LENGTH 100000000
 
@@ -180,7 +180,7 @@ void CACHE::llc_initialize_replacement()
     configs.resize(NUM_CONFIGS);
 
     //TODO: Generalize to any number of cores
-/*    unsigned int cnt = 0;
+    unsigned int cnt = 0;
     for(unsigned int i=0; i<3; i++) {
         for(unsigned int j=0; j<3; j++) {
             for(unsigned int k=0; k<3; k++) {
@@ -192,16 +192,17 @@ void CACHE::llc_initialize_replacement()
         }
     }
     curr_config = 40;   
-*/
-   
-    configs[0].init(0, 0, 0, 0); 
-    configs[1].init(1, 1, 1, 1); 
-    configs[2].init(2, 2, 2, 2); 
 
-    curr_config = 1;   
+    //configs[0].init(0, 0, 0, 0); 
+    //configs[1].init(1, 1, 1, 1); 
+    //configs[2].init(2, 2, 2, 2); 
+    //curr_config = 1;   
+
     cout << "Initialize Hawkeye state" << endl;
     hawkeye_epoch.reset();
     epoch_num = 0;
+    for(uint32_t i=0; i<NUM_CONFIGS; i++)
+        configs[i].new_epoch(epoch_num);
 }
 
 // find replacement victim
@@ -302,7 +303,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             }
 
             if(type == WRITEBACK)
-                configs[m].simulate_hawkeyegen_rrpv_wb((uint32_t)hawkeye_index[m], paddr, set);
+                configs[m].simulate_hawkeyegen_rrpv_wb((uint32_t)hawkeye_index[m], paddr, set, epoch_num);
         }
     //}
 
@@ -366,9 +367,8 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
             assert(hawkeye_index[m] >= 0);
             assert(hawkeye_index[m] < LLC_WAYS);
-            configs[m].simulate_hawkeyegen_rrpv((uint32_t)hawkeye_index[m], paddr, set, type, ip, new_prediction, hawkeye_hit[m]);
+            configs[m].simulate_hawkeyegen_rrpv((uint32_t)hawkeye_index[m], paddr, set, type, ip, new_prediction, hawkeye_hit[m], epoch_num);
         }
-
     //}
 
     //Make prediction and update RRPVs
@@ -415,7 +415,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 hit_rate[i] = hawkeye_epoch.get_hit_rate(i);
 
             improvement[m] = configs[m].get_improvement(hit_rate, hawkeye_epoch.get_bw_usage(), hawkeye_epoch.get_average_latency(), hawkeye_epoch.get_available_bw());
-            configs[m].reset_stats();
+            //configs[m].reset_stats();
             cout << m << ": " << improvement[m] << endl;
             if(improvement[m] > max_improvement)
             {
@@ -424,10 +424,19 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             }
         }
 
-        curr_config = best_config;
-        cout << endl << "Best config: " << best_config << " " << max_improvement << endl;
+        if((max_improvement > improvement[curr_config]) && (max_improvement >= 4.0))
+        {
+            curr_config = best_config;
+            cout << endl << "Changing to config: " << curr_config << " " << max_improvement << endl;
+        }
+        else
+        {
+            cout << endl << "Staying with config: " << curr_config << " " << max_improvement << endl;
+        }
         hawkeye_epoch.reset();
         epoch_num++;
+        for(uint32_t i=0; i<NUM_CONFIGS; i++)
+            configs[i].new_epoch(epoch_num);
     }
 }
 

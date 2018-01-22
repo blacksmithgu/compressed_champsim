@@ -35,6 +35,7 @@ struct ADDR_INFO
     bool is_high_cost_predicted; // for Obol
     uint64_t last_miss_cost;
     uint32_t index;
+    vector<uint64_t> context;
 
     void init(unsigned int curr_quanta, bool is_next_high_cost = false)
     {
@@ -45,6 +46,7 @@ struct ADDR_INFO
         is_high_cost_predicted = is_next_high_cost;
         last_miss_cost = 0;
         index = 0;
+        context.clear();
     }
 
     void update(unsigned int curr_quanta, uint64_t _pc, bool prediction, bool is_next_high_cost = false)

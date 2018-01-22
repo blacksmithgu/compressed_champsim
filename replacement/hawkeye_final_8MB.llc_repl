@@ -12,13 +12,15 @@
 //                                            //
 ///////////////////////////////////////////////
 
-// Source code for configs 1 and 2
+//Source code for configs 3 and 4
 
 #include "cache.h"
 #include "uncore.h"
+
 #include <map>
 #include <cassert>
 
+#define NUM_CORE 4
 #define LLC_SETS LLC_SET
 #define LLC_WAYS LLC_WAY
 
@@ -41,21 +43,21 @@ bool prefetched[LLC_SETS][LLC_WAYS];
 // Predictor with 2K entries and 5-bit counter per entry
 // Budget = 2048*5/8 bytes = 1.2KB
 #define MAX_SHCT 31
-#define SHCT_SIZE_BITS 11
+#define SHCT_SIZE_BITS 14
 #define SHCT_SIZE (1<<SHCT_SIZE_BITS)
-#include "hawkeye_predictor.h"
+#include "hawkeye_predictor_crc.h"
 HAWKEYE_PC_PREDICTOR* demand_predictor;  //Predictor
 HAWKEYE_PC_PREDICTOR* prefetch_predictor;  //Predictor
 
 #define OPTGEN_VECTOR_SIZE 128
-#include "optgen.h"
+#include "optgen_crc.h"
 OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of these
 
 #include <math.h>
 #define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
 #define bits(x, i, l) (((x) >> (i)) & bitmask(l))
 //Sample 64 sets per core
-#define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SETS) - 6), 6) )
+#define SAMPLED_SET(set) (bits(set, 0 , 8) == bits(set, ((unsigned long long)log2(LLC_SETS) - 8), 8) )
 
 // Sampler to track 8x cache history for sampled sets
 // 2800 entris * 4 bytes per entry = 11.2KB
@@ -63,15 +65,6 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
 #define SAMPLER_WAYS 8
 #define SAMPLER_SETS SAMPLED_CACHE_SIZE/SAMPLER_WAYS
 vector<map<uint64_t, ADDR_INFO> > addr_history; // Sampler
-
-
-vector<uint64_t> dd_interval_distribution;
-vector<uint64_t> dp_interval_distribution;
-vector<uint64_t> pd_interval_distribution;
-vector<uint64_t> pp_interval_distribution;
-uint64_t dd_intervals, dp_intervals, pd_intervals, pp_intervals;
-uint64_t dd_accuracy, dp_accuracy, pd_accuracy, pp_accuracy;
-uint64_t dd_cached, dp_cached, pd_cached, pp_cached;
 
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
@@ -93,20 +86,6 @@ void CACHE::llc_initialize_replacement()
     demand_predictor = new HAWKEYE_PC_PREDICTOR();
     prefetch_predictor = new HAWKEYE_PC_PREDICTOR();
 
-    pp_intervals = 0;
-    dp_intervals = 0;
-    pd_intervals = 0;
-    dd_intervals = 0;
-    
-    pp_accuracy = 0;
-    dp_accuracy = 0;
-    pd_accuracy = 0;
-    dd_accuracy = 0;
-
-    pp_cached = 0;
-    dp_cached = 0;
-    pd_cached = 0;
-    dd_cached = 0;
     cout << "Initialize Hawkeye state" << endl;
 }
 
@@ -178,8 +157,6 @@ void update_addr_history_lru(unsigned int sampler_set, unsigned int curr_lru)
     }
 }
 
-uint64_t average_latency = 0;
-uint64_t average_latency_count = 0;
 
 // called on every cache hit and cache fill
 void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
@@ -198,11 +175,6 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
     if (type == WRITEBACK)
         return;
 
-    if(!hit)
-    {
-        average_latency += latency;
-        average_latency_count += 1;
-    }
 
     //If we are sampling, OPTgen will only see accesses from sampled sets
     if(SAMPLED_SET(set))
@@ -214,70 +186,33 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         uint64_t sampler_tag = CRC(paddr >> 12) % 256;
         assert(sampler_set < SAMPLER_SETS);
 
-        unsigned int curr_timer = perset_mytimer[set];
-        if(curr_timer < addr_history[sampler_set][sampler_tag].last_quanta)
-            curr_timer = curr_timer + TIMER_SIZE;
-
         // This line has been used before. Since the right end of a usage interval is always 
         //a demand, ignore prefetches
         if((addr_history[sampler_set].find(sampler_tag) != addr_history[sampler_set].end()) && (type != PREFETCH))
         {
+            unsigned int curr_timer = perset_mytimer[set];
+            if(curr_timer < addr_history[sampler_set][sampler_tag].last_quanta)
+               curr_timer = curr_timer + TIMER_SIZE;
             bool wrap =  ((curr_timer - addr_history[sampler_set][sampler_tag].last_quanta) > OPTGEN_VECTOR_SIZE);
             uint64_t last_quanta = addr_history[sampler_set][sampler_tag].last_quanta % OPTGEN_VECTOR_SIZE;
-
-            //cout << curr_timer << " " << addr_history[sampler_set][sampler_tag].last_quanta << endl;
-            assert(curr_timer >= addr_history[sampler_set][sampler_tag].last_quanta);
-            uint64_t interval = (curr_timer - addr_history[sampler_set][sampler_tag].last_quanta);
-            if(addr_history[sampler_set][sampler_tag].prefetched)
-            {
-                if(pd_interval_distribution.size() < (interval + 1))
-                    pd_interval_distribution.resize((interval + 1), 0);
-                pd_interval_distribution[interval]++;
-                pd_intervals++;
-                //cout << "PD: " << hex << paddr << " " << addr_history[sampler_set][sampler_tag].PC << dec;
-            }
-            else
-            {
-                if(dd_interval_distribution.size() < (interval + 1))
-                    dd_interval_distribution.resize((interval + 1), 0);
-                dd_interval_distribution[interval]++;
-                dd_intervals++;
-            }
-
             //and for prefetch hits, we train the last prefetch trigger PC
-            if( !wrap && perset_optgen[set].should_cache(curr_quanta, last_quanta, false, cpu))
+            if( !wrap && perset_optgen[set].should_cache(curr_quanta, last_quanta))
             {
-                if(addr_history[sampler_set][sampler_tag].prefetched) { 
+                if(addr_history[sampler_set][sampler_tag].prefetched)
                     prefetch_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
-
-                    if(addr_history[sampler_set][sampler_tag].last_prediction) {
-                        pd_accuracy++;
-                    }
-                    pd_cached++;
-                }
-                else {
+                else
                     demand_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
-                    if(addr_history[sampler_set][sampler_tag].last_prediction)
-                        dd_accuracy++;
-                }
             }
             else
             {
                 //Train the predictor negatively because OPT would not have cached this line
-                if(addr_history[sampler_set][sampler_tag].prefetched) {
+                if(addr_history[sampler_set][sampler_tag].prefetched)
                     prefetch_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
-
-                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
-                        pd_accuracy++;
-                }
-                else {
+                else
                     demand_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
-                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
-                        dd_accuracy++;
-                }
             }
             //Some maintenance operations for OPTgen
-            perset_optgen[set].add_access(curr_quanta, cpu);
+            perset_optgen[set].add_access(curr_quanta);
             update_addr_history_lru(sampler_set, addr_history[sampler_set][sampler_tag].lru);
 
             //Since this was a demand access, mark the prefetched bit as false
@@ -300,7 +235,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
                 perset_optgen[set].add_prefetch(curr_quanta);
             }
             else
-                perset_optgen[set].add_access(curr_quanta, cpu);
+                perset_optgen[set].add_access(curr_quanta);
             update_addr_history_lru(sampler_set, SAMPLER_WAYS-1);
         }
         else //This line is a prefetch
@@ -308,76 +243,16 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             assert(addr_history[sampler_set].find(sampler_tag) != addr_history[sampler_set].end());
             //if(hit && prefetched[set][way])
             uint64_t last_quanta = addr_history[sampler_set][sampler_tag].last_quanta % OPTGEN_VECTOR_SIZE;
-
-            assert(curr_timer >= addr_history[sampler_set][sampler_tag].last_quanta);
-            uint64_t interval = (curr_timer - addr_history[sampler_set][sampler_tag].last_quanta);
-
-            if(addr_history[sampler_set][sampler_tag].prefetched)
+            if (perset_mytimer[set] - addr_history[sampler_set][sampler_tag].last_quanta < 5*NUM_CORE) 
             {
-                pp_intervals++; 
-                if(pp_interval_distribution.size() < (interval + 1))
-                    pp_interval_distribution.resize((interval + 1), 0);
-                pp_interval_distribution[interval]++;
-            }
-            else
-            {
-                dp_intervals++;
-                if(dp_interval_distribution.size() < (interval + 1))
-                    dp_interval_distribution.resize((interval + 1), 0);
-                dp_interval_distribution[interval]++;
-            }
-
-            if (perset_mytimer[set] - addr_history[sampler_set][sampler_tag].last_quanta < 5*NUM_CPUS) 
-            //if (perset_mytimer[set] - addr_history[sampler_set][sampler_tag].last_quanta < 90) 
-            {
-                if(perset_optgen[set].should_cache(curr_quanta, last_quanta, true, cpu))
+                if(perset_optgen[set].should_cache(curr_quanta, last_quanta))
                 {
-                    if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
-                    {
+                    if(addr_history[sampler_set][sampler_tag].prefetched)
                         prefetch_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
-
-                        if(addr_history[sampler_set][sampler_tag].last_prediction)
-                            pp_accuracy++;
-                    }
-                    else //D-P
-                    {
-                        demand_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
-                        if(addr_history[sampler_set][sampler_tag].last_prediction)
-                            dp_accuracy++;
-                    }
-                }
-                else
-                {
-                    if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
-                    {
-                        prefetch_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
-                    }
-
-            
-                    if(addr_history[sampler_set][sampler_tag].last_prediction == false)
-                    {
-                        if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
-                            pp_accuracy++;
-                        else
-                            dp_accuracy++;
-                    }
-                }
-            }
-            else
-            {
-                if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
-                {
-                    prefetch_predictor->decrement(addr_history[sampler_set][sampler_tag].PC);
-                }
-                if(addr_history[sampler_set][sampler_tag].last_prediction == false)
-                {
-                    if(addr_history[sampler_set][sampler_tag].prefetched) // P-P
-                        pp_accuracy++;
                     else
-                        dp_accuracy++;
+                       demand_predictor->increment(addr_history[sampler_set][sampler_tag].PC);
                 }
             }
-
 
             //Mark the prefetched bit
             addr_history[sampler_set][sampler_tag].mark_prefetch(); 
@@ -433,53 +308,16 @@ void CACHE::llc_replacement_final_stats()
 {
     unsigned int hits = 0;
     unsigned int accesses = 0;
-    unsigned int traffic = 0;
-    unsigned int per_core_hits[NUM_CPUS] = {0};
-    unsigned int per_core_accesses[NUM_CPUS] = {0};
-
     for(unsigned int i=0; i<LLC_SETS; i++)
     {
         accesses += perset_optgen[i].access;
         hits += perset_optgen[i].get_num_opt_hits();
-        traffic += perset_optgen[i].get_traffic();
-
-        for(unsigned int k=0; k<NUM_CPUS; k++) {
-            per_core_accesses[k] += perset_optgen[i].per_core_access[k];
-            per_core_hits[k] += perset_optgen[i].get_num_opt_hits(k);
-        }
     }
 
     std::cout << "OPTgen accesses: " << accesses << std::endl;
     std::cout << "OPTgen hits: " << hits << std::endl;
     std::cout << "OPTgen hit rate: " << 100*(double)hits/(double)accesses << std::endl;
-    std::cout << "Traffic: " << traffic << " " << 100*(double)traffic/(double)accesses << std::endl;
-    for(unsigned int k=0; k<NUM_CPUS; k++) 
-        std::cout << "OPTgen hit rate for core " << k <<": " << 100*(double)per_core_hits[k]/(double)per_core_accesses[k] << std::endl;
 
     cout << endl << endl;
-    cout << "D-D intervals: " << dd_intervals << " " << 100*((double)dd_accuracy/(double)dd_intervals) << endl;
-    for(unsigned int i=0; i<dd_interval_distribution.size(); i++)
-        cout << dd_interval_distribution[i] << " ";
-    cout << endl;
-
-    cout << "D-P intervals: " << dp_intervals << " " << 100*((double)dp_accuracy/(double)dp_intervals) << endl;
-    for(unsigned int i=0; i<dp_interval_distribution.size(); i++)
-        cout << dp_interval_distribution[i] << " ";
-    cout << endl;
-
-    cout << "P-D intervals: " << pd_intervals << " " << 100*((double)pd_accuracy/(double)pd_intervals) << endl;
-    cout << "P-D cached: " << 100*(double)pd_cached/(double)pd_intervals << endl;
-    for(unsigned int i=0; i<pd_interval_distribution.size(); i++)
-        cout << pd_interval_distribution[i] << " ";
-    cout << endl;
-
-
-    cout << "P-P intervals: " << pp_intervals << " " << 100*((double)pp_accuracy/(double)pp_intervals) << endl;
-    for(unsigned int i=0; i<pp_interval_distribution.size(); i++)
-        cout << pp_interval_distribution[i] << " ";
-    cout << endl;
-
-    cout << "Average latency: " << (double)average_latency/(double)average_latency_count << endl;
-
     return;
 }

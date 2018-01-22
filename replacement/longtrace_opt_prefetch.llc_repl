@@ -22,6 +22,7 @@
 extern string outputDecisionFile;
 map<uint64_t, vector<bool> > decisions; // TODO use a queue instead of vector
 map<uint64_t, vector<bool> > prefetch_decisions; // TODO use a queue instead of vector
+map<uint64_t, vector<bool> > prefetch_fake_hit; // TODO use a queue instead of vector
 
 uint32_t lru[LLC_SETS][LLC_WAYS];
 bool valid[LLC_SETS][LLC_WAYS];
@@ -36,10 +37,10 @@ uint64_t total_low_cost;
 extern unsigned obol_cost_threshold;
 void read_opt_decisions(string filename);
 
-#define ACCURACY 50
+#define ACCURACY 100
 unsigned int predictions;
 unsigned int inaccurate;
-
+unsigned int fake_hits;
 // initialize replacement state
 void CACHE::llc_initialize_replacement()
 {
@@ -64,6 +65,7 @@ void CACHE::llc_initialize_replacement()
     //srand (time(NULL));
     predictions = 0;
     inaccurate = 0;
+    fake_hits = 0;
 
     cout << "Initialize trace opt: " << outputDecisionFile << endl;
     cout << "Cost threshold: " << obol_cost_threshold << endl;
@@ -78,6 +80,19 @@ bool is_cost_high(double effective_latency)
 bool CACHE::is_fake_hit(uint64_t full_addr)
 {
     uint64_t paddr = (full_addr >> 6) << 6;
+
+//    cout << "Checking fake hit: " << hex << paddr << dec << endl;
+    return false;
+    if(prefetch_fake_hit.find(paddr) != prefetch_fake_hit.end())
+    {
+        if(prefetch_fake_hit[paddr].size() != 0)
+        {
+            fake_hits++;
+            prefetch_fake_hit[paddr].erase(prefetch_fake_hit[paddr].begin());
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -212,7 +227,9 @@ void CACHE::llc_replacement_final_stats()
     std::cout << "Average cost of a high cost miss: " << (double)total_high_cost/num_high_cost_misses << std::endl;
     std::cout << "Average cost of a low cost miss: " << (double)total_low_cost/num_low_cost_misses << std::endl;
 
-
+    cout << endl << endl << endl;
+    cout << "Fake hits: " << fake_hits << endl;
+    cout << endl << endl << endl;
 }
 
 void read_opt_decisions(string filename)
@@ -232,6 +249,7 @@ void read_opt_decisions(string filename)
         bool is_prefetch;
         bool classification;
         bool hawkeye_accuracy;
+        uint64_t length;
 
         stringstream iss(line); 
         iss >> std::hex >> pc;
@@ -240,15 +258,27 @@ void read_opt_decisions(string filename)
         iss >> std::dec >> interval_type;
         iss >> std::dec >> classification;
         iss >> std::dec >> hawkeye_accuracy;
+        iss >> std::dec >> length;
 
         //        cout << hex << load_address << " " << dec << classification << endl;
 
         if(is_prefetch)
         {
-            if(prefetch_decisions.find(load_address) == prefetch_decisions.end())
-                prefetch_decisions[load_address].clear();
+            if((interval_type == 3) && (length > 5))
+            {
+                if(prefetch_fake_hit.find(load_address) == prefetch_fake_hit.end())
+                    prefetch_fake_hit[load_address].clear();
 
-            prefetch_decisions[load_address].push_back(classification);
+                prefetch_fake_hit[load_address].push_back(1);
+            }
+            else
+            {
+                //assert(interval_type == 1 || interval_type == 5);
+                if(prefetch_decisions.find(load_address) == prefetch_decisions.end())
+                    prefetch_decisions[load_address].clear();
+
+                prefetch_decisions[load_address].push_back(classification);
+            }
         }
         else
         {

@@ -76,6 +76,7 @@ struct TRACE
     int hawkeye_accurate;
     bool is_prefetch;
     unsigned int interval_type; //00-DD, 01-PD, 02-DP, 03-PP
+    unsigned int length;
 
     TRACE(bool _real, uint64_t _pc, uint64_t _addr, double _prob, double _detrain_prob, bool _is_prefetch, bool _prediction)
     {   
@@ -89,9 +90,10 @@ struct TRACE
         is_prefetch = _is_prefetch;
         prediction = _prediction;
         interval_type = 5;
+        length = 0;
     }
 
-    void update(bool optgen, bool accurate, bool prefetch_end_point)
+    void update(bool optgen, bool accurate, bool prefetch_end_point, unsigned int _length)
     {
         optgen_result = optgen;
         hawkeye_accurate = accurate;
@@ -100,12 +102,14 @@ struct TRACE
         else
             assert(prediction != optgen_result);
 
-        if( !is_prefetch && !prefetch_end_point) interval_type = 0;
-        if( is_prefetch && !prefetch_end_point) interval_type = 1;
-        if( !is_prefetch && prefetch_end_point) interval_type = 2;
-        if( is_prefetch && prefetch_end_point) interval_type = 3;
+        if( !is_prefetch && !prefetch_end_point) interval_type = 0; // D-D
+        if( is_prefetch && !prefetch_end_point) interval_type = 1;  // P-D
+        if( !is_prefetch && prefetch_end_point) interval_type = 2;  // D-P
+        if( is_prefetch && prefetch_end_point) interval_type = 3;   // P-P
 
         assert(interval_type <= 3);
+
+        length = _length;
     }
 
     void print()
@@ -121,7 +125,7 @@ struct TRACE
         assert(interval_type <= 5);
         
         //cout << real << " " << hex << PC << " " << addr << " " << dec << prob << " " << detrain_prob << " " << optgen_result << " " << hawkeye_accurate << endl;
-        cout << hex << PC << " " << addr << " " << dec << " " << is_prefetch << " " << interval_type << " " << optgen_result << " " << hawkeye_accurate << endl;
+        cout << hex << PC << " " << addr << " " << dec << " " << is_prefetch << " " << interval_type << " " << optgen_result << " " << hawkeye_accurate << " " << length << endl;
     }
 };
 
@@ -258,7 +262,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
             if( perset_optgen[set].should_cache(curr_quanta, last_quanta))
             {
-                trace[addr_history[paddr].index].update(1, (last_prediction == 1), (type == PREFETCH));
+                trace[addr_history[paddr].index].update(1, (last_prediction == 1), (type == PREFETCH), (curr_quanta - last_quanta));
                 if(addr_history[paddr].prefetched)
                     prefetch_predictor->increment(addr_history[paddr].PC);
                 else 
@@ -266,7 +270,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             }
             else
             {
-                trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH));
+                trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH), (curr_quanta - last_quanta));
                 if(addr_history[paddr].prefetched) 
                     prefetch_predictor->decrement(addr_history[paddr].PC);
                 else 
@@ -304,21 +308,23 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
             bool last_prediction = addr_history[paddr].last_prediction;
 
             //if (perset_mytimer[set] - addr_history[paddr].last_quanta < 5*NUM_CPUS) 
-            if (true)
+            if(true)
             {
                 if(perset_optgen[set].should_cache(curr_quanta, last_quanta, true))
                 {
-                    trace[addr_history[paddr].index].update(1, (last_prediction == 1), (type == PREFETCH));
+                    trace[addr_history[paddr].index].update(1, (last_prediction == 1), (type == PREFETCH), (perset_mytimer[set] - addr_history[paddr].last_quanta));
                     if(addr_history[paddr].prefetched) // P-P
                         prefetch_predictor->increment(addr_history[paddr].PC);
                     else //D-P
                         demand_predictor->increment(addr_history[paddr].PC);
                 }
                 else
-                    trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH));
+                    trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH), (perset_mytimer[set] - addr_history[paddr].last_quanta));
             }
             else
-                trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH));
+            {
+                trace[addr_history[paddr].index].update(0, (last_prediction == 0), (type == PREFETCH), (perset_mytimer[set] - addr_history[paddr].last_quanta));
+            }
 
             perset_optgen[set].add_prefetch(curr_quanta);
         }
@@ -394,12 +400,12 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 // use this function to print out your own stats at the end of simulation
 void CACHE::llc_replacement_final_stats()
 {
-
+/*
     for(unsigned int i =0; i<trace.size(); i++)
     {
         trace[i].print();
     }
-
+*/
     return ;
 
     unsigned int hits = 0;
@@ -425,3 +431,11 @@ void CACHE::llc_replacement_final_stats()
         cout << "Average latency Core " << i << ": " << (double)average_latency[i]/(double)average_latency_count[i] << endl;
     return;
 }
+
+bool CACHE::is_fake_hit(uint64_t full_addr)
+{
+    uint64_t paddr = (full_addr >> 6) << 6;
+    return false;
+}
+
+

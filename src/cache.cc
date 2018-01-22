@@ -646,7 +646,7 @@ void CACHE::handle_prefetch()
             int way = check_hit(&PQ.entry[index]);
             bool fake_hit = false; //only llc
             if (cache_type == IS_LLC) 
-                fake_hit = is_fake_hit(PQ.entry[index].address);
+                fake_hit = is_fake_hit(PQ.entry[index].full_addr);
             
             if ((way >= 0) || fake_hit) { // prefetch hit
 

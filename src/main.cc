@@ -65,7 +65,8 @@ void print_roi_stats(uint32_t cpu, CACHE *cache)
 
     cout << cache->NAME;
     cout << " PREFETCH  REQUESTED: " << setw(10) << cache->pf_requested << "  ISSUED: " << setw(10) << cache->pf_issued;
-    cout << "  USEFUL: " << setw(10) << cache->pf_useful << "  USELESS: " << setw(10) << cache->pf_useless << endl;
+    cout << "  FILLED: " << setw(10) << cache->pf_fill << "  USEFUL: " << setw(10) << cache->pf_useful << "  USELESS: " << setw(10) << cache->pf_useless << endl;
+    cout << "  ACCURACY: " << setw(10) << 100*(double)(cache->pf_useful)/(double)(cache->pf_fill) << endl;
 }
 
 void print_sim_stats(uint32_t cpu, CACHE *cache)
