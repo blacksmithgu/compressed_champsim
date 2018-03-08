@@ -24,6 +24,52 @@ using namespace std;
 #include <set>
 #include <vector>
 
+class Result
+{
+    // get predictions
+    public:
+			vector<int> prediction;
+			int length;
+			int current;
+            double confidence;
+            double threshold;
+
+			Result(){
+					this->length = 1;
+					this->current = 0;
+					this->prediction.push_back(false);
+                    this->confidence = 0;
+                    this->threshold = 0;
+			}
+			Result(int current, int length){
+					this->length = length;
+					this->current = current;
+					prediction.clear();
+					for (int i = 0; i < length; i++){
+						prediction.push_back(0);
+					}
+                    confidence = 0;
+                    threshold = 0;
+			}
+			~Result(){
+					prediction.clear();
+                    confidence = 0;
+                    threshold = 0;
+			}
+				
+			Result copy(){
+					Result r(current, length);
+					for (int i = 0; i < length; i++){
+						r.prediction[i] = prediction[i];
+					}
+                    r.confidence = confidence;
+                    r.threshold = threshold;
+					return r;
+			}
+};
+
+
+
 struct ADDR_INFO
 {
     uint64_t addr;
@@ -32,18 +78,31 @@ struct ADDR_INFO
     bool prefetched;
     uint32_t lru;
 
+    uint64_t cpu;
+    int last_prediction;
+    bool detrained;
+
+    Result prev_result;
+    vector<uint64_t> context;
+
     void init(unsigned int curr_quanta)
     {
         last_quanta = 0;
         PC = 0;
         prefetched = false;
         lru = 0;
+
+        cpu = 0;
+        context.clear();
+        detrained = false;
     }
 
-    void update(unsigned int curr_quanta, uint64_t _pc, bool prediction)
+    void update(unsigned int curr_quanta, uint64_t _pc, int prediction)
     {
         last_quanta = curr_quanta;
         PC = _pc;
+        last_prediction = prediction;
+        detrained = false;
     }
 
     void mark_prefetch()
