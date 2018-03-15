@@ -1,0 +1,36 @@
+#include "bo_percore.h" 
+#include "isb_test.h" 
+
+void CACHE::l2c_prefetcher_initialize() {
+	bo_l2c_prefetcher_initialize();
+	isb_l2c_prefetcher_initialize();
+}
+
+void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint32_t cpu) {
+    uint64_t bo_trigger_addr = 0;
+    uint64_t bo_target_addr = 0;
+    uint64_t isb_trigger_addr = 0;
+    uint64_t isb_target_addr = 0;
+
+	bo_l2c_prefetcher_operate(addr, ip, cache_hit, type, this, &bo_trigger_addr, &bo_target_addr, cpu);
+	isb_l2c_prefetcher_operate(addr, ip, cache_hit, type, this, &isb_trigger_addr, &isb_target_addr);
+
+    if (bo_trigger_addr && bo_target_addr) {
+        bo_issue_prefetcher(this, ip, bo_trigger_addr, bo_target_addr, FILL_LLC);
+    }
+
+    if (isb_trigger_addr && isb_target_addr) {
+        isb_issue_prefetcher(this, ip, isb_trigger_addr, isb_target_addr, FILL_LLC);
+    }
+}
+
+void CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t cpu) {
+	bo_l2c_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, this, cpu);
+	isb_l2c_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, this);
+}
+
+void CACHE::l2c_prefetcher_final_stats() {
+	bo_l2c_prefetcher_final_stats();
+	isb_l2c_prefetcher_final_stats();
+}
+
