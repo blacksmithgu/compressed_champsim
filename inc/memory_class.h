@@ -20,7 +20,7 @@ extern uint64_t l2pf_access;
 class MEMORY {
   public:
     // memory interface
-    MEMORY *upper_level_icache[NUM_CPUS], *upper_level_dcache[NUM_CPUS], *lower_level, *extra_interface;
+    MEMORY *upper_level_icache[NUM_CPUS], *upper_level_dcache[NUM_CPUS], *lower_level, *extra_interface, *prefetcher_level_dcache;
 
     // empty queues
     PACKET_QUEUE WQ{"EMPTY", 1}, RQ{"EMPTY", 1}, PQ{"EMPTY", 1}, MSHR{"EMPTY", 1};
@@ -34,6 +34,7 @@ class MEMORY {
     virtual void increment_WQ_FULL(uint64_t address) = 0;
     virtual uint32_t get_occupancy(uint8_t queue_type, uint64_t address) = 0;
     virtual uint32_t get_size(uint8_t queue_type, uint64_t address) = 0;
+    virtual void inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr) {}
 
     // stats
     uint64_t ACCESS[NUM_TYPES], HIT[NUM_TYPES], MISS[NUM_TYPES], MSHR_MERGED[NUM_TYPES], STALL[NUM_TYPES];

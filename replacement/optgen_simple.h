@@ -36,6 +36,7 @@ struct ADDR_INFO
     uint64_t last_miss_cost;
     uint32_t index;
     vector<uint64_t> context;
+    bool written;
 
     void init(unsigned int curr_quanta, bool is_next_high_cost = false)
     {
@@ -47,6 +48,7 @@ struct ADDR_INFO
         last_miss_cost = 0;
         index = 0;
         context.clear();
+        written = false;
     }
 
     void update(unsigned int curr_quanta, uint64_t _pc, bool prediction, bool is_next_high_cost = false)

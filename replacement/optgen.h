@@ -33,6 +33,7 @@ struct ADDR_INFO
     uint32_t lru;
     bool last_prediction;
     bool is_high_cost_predicted; // for Obol
+    bool detrained;
 
     void init(unsigned int curr_quanta, bool is_next_high_cost = false)
     {
@@ -41,6 +42,7 @@ struct ADDR_INFO
         prefetched = false;
         lru = 0;
         is_high_cost_predicted = is_next_high_cost;
+        detrained = false;
     }
 
     void update(unsigned int curr_quanta, uint64_t _pc, bool prediction, bool is_next_high_cost = false)
@@ -49,6 +51,7 @@ struct ADDR_INFO
         PC = _pc;
         last_prediction = prediction;
         is_high_cost_predicted = is_next_high_cost;
+        detrained = false;
     }
 
     void mark_prefetch()
