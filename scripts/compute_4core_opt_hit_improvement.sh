@@ -17,17 +17,17 @@ count=`ls -lh $baseline/*.txt | wc -l`
 echo $count
 
 dir=$(dirname "$0")
-for i in `seq 1 70`;
+for i in `seq 1 100`;
 do
     baseline_file="$baseline/mix""$i.txt"
     dut_file="$dut/mix""$i.txt"
     
     #echo "$baseline_file $dut_file"
 
-    trace0=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $1}'`
-    trace1=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $2}'`
-    trace2=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $3}'`
-    trace3=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $4}'`
+    trace0=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $1}'`
+    trace1=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $2}'`
+    trace2=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $3}'`
+    trace3=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $4}'`
 
     sc_file0="$sc_baseline/$trace0"".txt"
     sc_file1="$sc_baseline/$trace1"".txt"
@@ -51,11 +51,20 @@ do
     core2_sc_hit_rate=`perl ${dir}/get_hit_rate.pl $sc_file2`
     core3_sc_hit_rate=`perl ${dir}/get_hit_rate.pl $sc_file3`
 
-    #echo "$core0_sc_hit_rate $core1_sc_hit_rate $core2_sc_hit_rate $core3_sc_hit_rate"
+#    core0_sc_hit_rate=1
+#    core1_sc_hit_rate=1
+#    core2_sc_hit_rate=1
+#    core3_sc_hit_rate=1
 
-   # echo "$core0_baseline_hit_rate $core0_sc_hit_rate" 
-    weighted_dut=`echo "($core0_dut_hit_rate/$core0_sc_hit_rate) + ($core1_dut_hit_rate/$core1_sc_hit_rate) + ($core2_dut_hit_rate/$core2_sc_hit_rate) + ($core3_dut_hit_rate/$core3_sc_hit_rate)" | bc -l`
-    weighted_baseline=`echo "($core0_baseline_hit_rate/$core0_sc_hit_rate) + ($core1_baseline_hit_rate/$core1_sc_hit_rate) + ($core2_baseline_hit_rate/$core2_sc_hit_rate) + ($core3_baseline_hit_rate/$core3_sc_hit_rate)" | bc -l`
+    #echo "$core0_sc_hit_rate $core1_sc_hit_rate $core2_sc_hit_rate $core3_sc_hit_rate"
+    #echo "$core0_baseline_hit_rate $core1_baseline_hit_rate $core2_baseline_hit_rate $core3_baseline_hit_rate" 
+    #echo "$core0_dut_hit_rate $core1_dut_hit_rate $core2_dut_hit_rate $core3_dut_hit_rate" 
+
+
+    weighted_dut=`echo "((100-$core0_dut_hit_rate)/(100-$core0_sc_hit_rate)) + ((100-$core1_dut_hit_rate)/(100-$core1_sc_hit_rate)) + ((100-$core2_dut_hit_rate)/(100-$core2_sc_hit_rate)) + ((100-$core3_dut_hit_rate)/(100-$core3_sc_hit_rate))" | bc -l`
+    weighted_baseline=`echo "((100-$core0_baseline_hit_rate)/(100-$core0_sc_hit_rate)) + ((100-$core1_baseline_hit_rate)/(100-$core1_sc_hit_rate)) + ((100-$core2_baseline_hit_rate)/(100-$core2_sc_hit_rate)) + ((100-$core3_baseline_hit_rate)/(100-$core3_sc_hit_rate))" | bc -l`
+    #weighted_dut=`echo "($core0_dut_hit_rate/$core0_sc_hit_rate) + ($core1_dut_hit_rate/$core1_sc_hit_rate) + ($core2_dut_hit_rate/$core2_sc_hit_rate) + ($core3_dut_hit_rate/$core3_sc_hit_rate)" | bc -l`
+    #weighted_baseline=`echo "($core0_baseline_hit_rate/$core0_sc_hit_rate) + ($core1_baseline_hit_rate/$core1_sc_hit_rate) + ($core2_baseline_hit_rate/$core2_sc_hit_rate) + ($core3_baseline_hit_rate/$core3_sc_hit_rate)" | bc -l`
 
     weighted_hit_improvement=`echo "100*(($weighted_dut/$weighted_baseline)-1)" | bc -l`
     #echo "$i, $weighted_dut, $weighted_baseline, $weighted_hit_improvement"

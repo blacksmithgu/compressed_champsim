@@ -1,18 +1,51 @@
 #!/usr/bin/perl
-if($#ARGV != 1){
-    print "ERROR : Usage : perl get_hitrate.pl <dut> <coreid>\n";
+if($#ARGV != 2){
+    print "ERROR : Usage : perl get_hitrate.pl <baseline> <dut> <coreid>\n";
     exit;
 }
 
+our $baseline_stats_file = shift;
 our $dut_stats_file = shift;
 our $coreid = shift;
 
-my $dut_hitrate = compute_hitrate($dut_stats_file, $coreid);
+my $baseline_hits = compute_hits($baseline_stats_file, $coreid);
+#print "$baseline_hits\n";
+my $dut_hits = compute_hits($dut_stats_file, $coreid);
+#print "$dut_hits\n";
 
-chomp($dut_hitrate);
-print "$dut_hitrate\n";
+my $baseline_traffic = compute_dram_traffic($baseline_stats_file);
+my $dut_traffic = compute_dram_traffic($dut_stats_file);
 
-sub compute_hitrate
+my $slope = ($dut_traffic - $baseline_traffic)/($dut_hits - $baseline_hits);
+print "$slope\n";
+
+sub compute_dram_traffic
+{
+    $stats_file = $_[0];   
+    my $dram_traffic = 0;
+    my $roi = 0;
+
+    foreach (qx[cat $stats_file 2>/dev/null]) {
+        $line = $_;
+
+        if ($line =~ m/Region of Interest Statistics/)
+        {
+            $roi = 1;
+        }
+        if (($roi == 1) && ($line =~ m/LLC TOTAL[\s\t]+ACCESS:[\s\t]+([\d]+)[\s\t]+HIT:[\s\t]+([\d]+)[\s\t]+MISS:[\s\t]+([\d]+)/))
+        {
+            $dram_traffic = $dram_traffic + $3;
+        }
+    }
+
+    unless ( defined($dram_traffic) ) {
+        print "ERROR problem with $stats_file\n";
+        return $dram_traffic;
+    }
+    return $dram_traffic;
+}
+
+sub compute_hits
 {
     $stats_file = $_[0];   
     $core = $_[1];
@@ -54,15 +87,14 @@ sub compute_hitrate
         }
     }
 
-#    return $num_hits;
     $hit_rate = 100*$num_hits/$num_accesses;
     if($hit_rate < 0.01) {
         $hit_rate = 0.01;
     }
     unless ( defined($hit_rate) ) {
         print "ERROR problem with $stats_file\n";
-        return $hit_rate;
+        return $$num_hits;
     }
-    return $hit_rate;
+    return $num_hits;
 }
 

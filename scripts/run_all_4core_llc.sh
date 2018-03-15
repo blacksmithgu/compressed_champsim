@@ -15,14 +15,7 @@ do
 #    echo $f $benchmark 
     num=$i
 
-#    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC_AMPM/$output/"
-#    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC_BO/$output/"
-#    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC_KPC/$output/"
-#    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC_LLC/$output/"
-#      output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC/$output/"
-#      output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/NP/$output/"
-      output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/NP_4.5/$output/"
-#    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/BO/$output/"
+    output_dir="/scratch/cluster/akanksha/CRCRealOutput/4coreCRC/PAC_LLC/$output/"
     if [ ! -e "$output_dir" ] ; then
         mkdir $output_dir
         mkdir "$output_dir/scripts"
@@ -32,7 +25,6 @@ do
 
     #cd $output_dir
     command="/u/akanksha/MyChampSim/ChampSim/scripts/run_4core.sh $binary 200 1000 $num $output_dir"
-    #command="/u/akanksha/MyChampSim/ChampSim/scripts/run_4core.sh $binary 200 1000 $num $output_dir -ped_coefficient\ 10"
 #    echo $command
 
     /u/akanksha/cache_study/condor_shell --silent --log --condor_dir="$condor_dir" --condor_suffix="$num" --output_dir="$output_dir/scripts" --simulate --script_name="$script_name" --cmdline="$command"

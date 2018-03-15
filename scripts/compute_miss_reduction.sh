@@ -11,15 +11,19 @@ dut=$2
 echo $dut
 
 miss_reduction_average=0
-count=`ls -lh $baseline/*.txt | wc -l`
+#count=`ls -lh $baseline/*.txt | wc -l`
+
+count=`cat /u/akanksha/MyChampSim/ChampSim/sim_list/crc2_list.txt | wc -l`
 echo $count
 
 dir=$(dirname "$0")
-for f in /scratch/cluster/akanksha/CRCRealTraces/*.gz
-do
-    benchmark=$(basename "$f")
-    benchmark="${benchmark%.*}"
-    benchmark="${benchmark%.*}"
+#for f in /scratch/cluster/akanksha/CRCRealTraces/*.gz
+#do
+while read line; do
+    benchmark=$line
+    #benchmark=$(basename "$f")
+    #benchmark="${benchmark%.*}"
+    #benchmark="${benchmark%.*}"
     baseline_file="$baseline/$benchmark"".txt"
     dut_file="$dut/$benchmark"".txt"
 
@@ -27,6 +31,7 @@ do
     miss_reduction=`perl ${dir}/miss-reduction.pl $baseline_file $dut_file`
     echo "$benchmark, $miss_reduction"
     miss_reduction_average=`perl ${dir}/arithmean.pl $miss_reduction $miss_reduction_average $count`
-done
+#done
+done < /u/akanksha/MyChampSim/ChampSim/sim_list/crc2_list.txt
 
 echo "Average: $miss_reduction_average"

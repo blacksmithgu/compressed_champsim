@@ -14,20 +14,21 @@ echo $sc_baseline
 
 average=1.0
 count=`ls -lh $baseline/*.txt | wc -l`
+count=5
 echo $count
 
 dir=$(dirname "$0")
-for i in `seq 1 70`;
+for i in `seq 1 5`;
 do
     baseline_file="$baseline/mix""$i.txt"
     dut_file="$dut/mix""$i.txt"
     
     #echo "$baseline_file $dut_file"
 
-    trace0=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $1}'`
-    trace1=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $2}'`
-    trace2=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $3}'`
-    trace3=`sed -n ''$i'p' /u/akanksha/ChampsimGitHub/ChampSim/sim_list/4core_workloads.txt | awk '{print $4}'`
+    trace0=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $1}'`
+    trace1=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $2}'`
+    trace2=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $3}'`
+    trace3=`sed -n ''$i'p' /u/akanksha/MyChampSim/ChampSim/sim_list/4core_workloads.txt | awk '{print $4}'`
 
     sc_file0="$sc_baseline/$trace0"".txt"
     sc_file1="$sc_baseline/$trace1"".txt"

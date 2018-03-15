@@ -10,7 +10,7 @@ echo $binary
 output=$2
 echo $output
 
-for i in `seq 1 40`;
+for i in `seq 1 50`;
 do
 #    echo $f $benchmark 
     num=$i
@@ -24,7 +24,7 @@ do
     script_name="$num"
 
     #cd $output_dir
-    command="/u/akanksha/ChampsimGitHub/ChampSim/scripts/run_8core.sh $binary 0 250 $num $output_dir"
+    command="/u/akanksha/MyChampSim/ChampSim/scripts/run_8core.sh $binary 100 500 $num $output_dir"
 #    echo $command
 
     /u/akanksha/cache_study/condor_shell --silent --log --condor_dir="$condor_dir" --condor_suffix="$num" --output_dir="$output_dir/scripts" --simulate --script_name="$script_name" --cmdline="$command"

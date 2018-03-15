@@ -1,23 +1,21 @@
 #!/usr/bin/perl
-if($#ARGV != 1){
-    print "ERROR : Usage : perl get_hitrate.pl <dut> <coreid>\n";
+if($#ARGV != 0){
+    print "ERROR : Usage : perl get_hitrate.pl <dut>\n";
     exit;
 }
 
 our $dut_stats_file = shift;
-our $coreid = shift;
 
-my $dut_hitrate = compute_hitrate($dut_stats_file, $coreid);
+our $dut_mpki=0.0;
+$dut_mpki = $dut_mpki + compute_mpki($dut_stats_file, 0);
 
-chomp($dut_hitrate);
-print "$dut_hitrate\n";
+print "$dut_mpki\n";
 
-sub compute_hitrate
+sub compute_mpki
 {
     $stats_file = $_[0];   
     $core = $_[1];
-    my $num_hits = 0;
-    my $num_accesses = 0;
+    my $num_misses = 0;
     my $roi = 0;
     my $core_stats = 0;
 
@@ -43,26 +41,16 @@ sub compute_hitrate
     
         if (($roi == 1) && ($core_stats == 1) && ($line =~ m/LLC LOAD[\s\t]+ACCESS:[\s\t]+([\d]+)[\s\t]+HIT:[\s\t]+([\d]+)[\s\t]+MISS:[\s\t]+([\d]+)/))
         {
-            $num_hits = $num_hits + $2;
-            $num_accesses = $num_accesses + $1;
+            $num_misses = $num_misses + $3;
         }
         
         if (($roi == 1) && ($core_stats == 1) && ($line =~ m/LLC RFO[\s\t]+ACCESS:[\s\t]+([\d]+)[\s\t]+HIT:[\s\t]+([\d]+)[\s\t]+MISS:[\s\t]+([\d]+)/))
         {
-            $num_hits = $num_hits + $2;
-            $num_accesses = $num_accesses + $1;
+            $num_misses = $num_misses + $3;
         }
     }
 
-#    return $num_hits;
-    $hit_rate = 100*$num_hits/$num_accesses;
-    if($hit_rate < 0.01) {
-        $hit_rate = 0.01;
-    }
-    unless ( defined($hit_rate) ) {
-        print "ERROR problem with $stats_file\n";
-        return $hit_rate;
-    }
-    return $hit_rate;
+    $mpki = $num_misses/1000000;
+    return $mpki;
 }
 

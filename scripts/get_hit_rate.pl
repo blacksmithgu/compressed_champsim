@@ -39,6 +39,9 @@ sub compute_hitrate
     }
 
     $hit_rate = 100*$num_hits/$num_accesses;
+    if ($hit_rate == 0) {
+        $hit_rate = 0.01;
+    }
     unless ( defined($hit_rate) ) {
         print "ERROR problem with $stats_file\n";
         return $hit_rate;

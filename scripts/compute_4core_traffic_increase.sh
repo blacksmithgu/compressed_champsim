@@ -14,12 +14,13 @@ traffic_increase_average=0
 count=`ls -lh $baseline/*.txt | wc -l`
 echo $count
 
-for i in `seq 1 70`;
+for i in `seq 1 100`;
 do
     baseline_file="$baseline/mix""$i.txt"
     dut_file="$dut/mix""$i.txt"
 
     traffic_increase=`perl traffic.pl $baseline_file $dut_file`
+    #traffic_increase=`perl get_dram_traffic.pl $dut_file`
     echo "$i, $traffic_increase"
     traffic_increase_average=`perl arithmean.pl $traffic_increase $traffic_increase_average $count`
 done

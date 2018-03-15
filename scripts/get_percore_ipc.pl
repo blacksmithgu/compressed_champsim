@@ -10,7 +10,7 @@ our $coreid = shift;
 my $dut_ipc = compute_ipc($dut_stats_file, $coreid);
 
 chomp($dut_ipc);
-print "$dut_ipc";
+print "$dut_ipc\n";
 
 sub compute_ipc
 {

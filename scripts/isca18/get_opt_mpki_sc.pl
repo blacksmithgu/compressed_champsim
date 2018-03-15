@@ -1,27 +1,28 @@
 #!/usr/bin/perl
 if($#ARGV != 1){
-    print "ERROR : Usage : perl get_hitrate.pl <dut> <coreid>\n";
+    print "ERROR : Usage : perl get_hitrate.pl <baseline> <dut>\n";
     exit;
 }
 
+our $baseline_stats_file = shift;
 our $dut_stats_file = shift;
-our $coreid = shift;
 
-my $dut_hitrate = compute_hitrate($dut_stats_file, $coreid);
+our $dut_mpki=0.0;
+$dut_mpki = $dut_mpki + compute_mpki($baseline_stats_file, $dut_stats_file, 0);
 
-chomp($dut_hitrate);
-print "$dut_hitrate\n";
+print "$dut_mpki\n";
 
-sub compute_hitrate
+sub compute_mpki
 {
-    $stats_file = $_[0];   
-    $core = $_[1];
-    my $num_hits = 0;
+    $baseline_file = $_[0];   
+    $stats_file = $_[1];   
+    $core = $_[2];
+
     my $num_accesses = 0;
     my $roi = 0;
     my $core_stats = 0;
 
-    foreach (qx[cat $stats_file 2>/dev/null]) {
+    foreach (qx[cat $baseline_file 2>/dev/null]) {
         $line = $_;
 
         if ($line =~ m/Region of Interest Statistics/)
@@ -43,26 +44,29 @@ sub compute_hitrate
     
         if (($roi == 1) && ($core_stats == 1) && ($line =~ m/LLC LOAD[\s\t]+ACCESS:[\s\t]+([\d]+)[\s\t]+HIT:[\s\t]+([\d]+)[\s\t]+MISS:[\s\t]+([\d]+)/))
         {
-            $num_hits = $num_hits + $2;
             $num_accesses = $num_accesses + $1;
         }
         
         if (($roi == 1) && ($core_stats == 1) && ($line =~ m/LLC RFO[\s\t]+ACCESS:[\s\t]+([\d]+)[\s\t]+HIT:[\s\t]+([\d]+)[\s\t]+MISS:[\s\t]+([\d]+)/))
         {
-            $num_hits = $num_hits + $2;
             $num_accesses = $num_accesses + $1;
         }
     }
 
-#    return $num_hits;
-    $hit_rate = 100*$num_hits/$num_accesses;
-    if($hit_rate < 0.01) {
-        $hit_rate = 0.01;
+    $hit_rate_line=`grep "OPTgen hit rate for core $core" $stats_file`;
+    my $hit_rate = 0.0;
+    if ($hit_rate_line =~ m/OPTgen hit rate for core $core:[\s\t]+([\d\.]+)/)
+    {
+        $hit_rate = $1;
     }
-    unless ( defined($hit_rate) ) {
-        print "ERROR problem with $stats_file\n";
-        return $hit_rate;
+    else
+    {
+        print "Not found\n";
     }
-    return $hit_rate;
+    #print "$hit_rate\n";
+    my $num_misses = (100-$hit_rate)*$num_accesses/100;
+
+    $mpki = $num_misses/1000000;
+    return $mpki;
 }
 
