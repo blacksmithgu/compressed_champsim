@@ -1,0 +1,166 @@
+#include "cache.h"
+//#include "kpcp.h"
+
+#define maxRRPV 3
+#define NUM_POLICY 2
+#define PSEL_WIDTH 10
+#define PSEL_MAX ((1<<PSEL_WIDTH)-1)
+
+
+#include <math.h>
+#define bitmask(l) (((l) == 64) ? (unsigned long long)(-1LL) : ((1LL << (l))-1LL))
+#define bits(x, i, l) (((x) >> (i)) & bitmask(l))
+//Sample 64 sets per core
+#define SAMPLED_SET(set) (bits(set, 0 , 6) == bits(set, ((unsigned long long)log2(LLC_SET) - 6), 6) )
+
+
+uint32_t rrpv[LLC_SET][LLC_WAY],
+         DGHR[NUM_CPUS],
+         PGHR[NUM_CPUS];
+
+uint32_t sampler_tag[LLC_SET][LLC_WAY];
+bool sampler_prefetch[LLC_SET][LLC_WAY];
+bool sampler_used[LLC_SET][LLC_WAY];
+uint32_t sampler_lru[LLC_SET][LLC_WAY];
+
+void CACHE::llc_initialize_replacement()
+{
+    cout << "Initialize DRRIP state" << endl;
+
+    for(int i=0; i<LLC_SET; i++) {
+        for(int j=0; j<LLC_WAY; j++) {
+            rrpv[i][j] = maxRRPV;
+
+            sampler_tag[i][j] = 0;
+            sampler_lru[i][j] = j;
+            sampler_prefetch[i][j] = false;
+            sampler_used[i][j] = false;
+        }
+    }
+
+    for (int i=0; i<NUM_CPUS; i++) {
+        DGHR[i] = PSEL_MAX/2;
+        PGHR[i] = PSEL_MAX/2;
+    }
+}
+
+// called on every cache hit and cache fill
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
+{
+    uint64_t paddr = (full_addr >> 6) << 6;
+    //Training
+    if(SAMPLED_SET(set))
+    {
+        bool sampler_hit = false;
+        uint32_t lru_victim = 0;
+        uint32_t sampler_way = 0;
+        for(int j=0; j<LLC_WAY; j++) 
+        {
+            if(sampler_tag[set][j] == paddr) //Sampler hit
+            {   
+                sampler_hit = true;
+                if(sampler_used[set][j] == 0)  //First use
+                {
+                    if(sampler_prefetch[set][j] == true)
+                        PGHR[cpu] = (PGHR[cpu] > 0) ? (PGHR[cpu]-1) : 0;
+                    else
+                        DGHR[cpu] = (DGHR[cpu] > 0) ? (DGHR[cpu]-1) : 0;
+                }
+
+                sampler_used[set][j] = 1;
+                sampler_way = j;
+                break;
+            }
+
+            if(sampler_lru[set][j] > sampler_lru[set][lru_victim])
+            {
+                lru_victim = j;
+            }
+        }
+
+        if(!sampler_hit) //Sampler miss
+        {   
+            if(sampler_used[set][lru_victim] == false)
+            {
+                if(sampler_prefetch[set][lru_victim] == true)
+                    PGHR[cpu] = (PGHR[cpu] < PSEL_MAX) ? (PGHR[cpu]+1) : PSEL_MAX;
+                else
+                    DGHR[cpu] = (DGHR[cpu] < PSEL_MAX) ? (DGHR[cpu]+1) : PSEL_MAX;
+            }
+
+            sampler_way = lru_victim;
+            sampler_tag[set][lru_victim] = paddr;
+            sampler_used[set][lru_victim] = false;
+        }
+
+
+        sampler_prefetch[set][sampler_way] = (type == PREFETCH);
+        // update lru replacement state
+        for (uint32_t i=0; i<NUM_WAY; i++) {
+            if (sampler_lru[set][i] < sampler_lru[set][sampler_way]) {
+                sampler_lru[set][i]++;
+            }
+        }
+        sampler_lru[set][sampler_way] = 0; // promote to the MRU position
+    }
+
+
+    //PRediction
+    // do not update replacement state for writebacks
+    if (type == WRITEBACK) {
+        //    rrpv[set][way] = maxRRPV-1;
+        return;
+    }
+
+    // cache hit
+    if (hit) { 
+        if(type == PREFETCH)
+        {
+            if(block[set][way].confidence > 75) //TODO
+            //if(block[set][way].confidence > FILL_THRESHOLD)
+                rrpv[set][way] = 0; 
+        }
+        else
+            rrpv[set][way] = 0; 
+    }
+    else
+    {
+        if(type == PREFETCH) {
+            if (PGHR[cpu] == PSEL_MAX)
+                rrpv[set][way] = 3;
+            else
+                rrpv[set][way] = 2;
+        } 
+        else {
+            if (DGHR[cpu] == PSEL_MAX)
+                rrpv[set][way] = 3;
+            else
+                rrpv[set][way] = 2;
+        }
+    }
+}
+
+// find replacement victim
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type)
+{
+    // look for the maxRRPV line
+    while (1)
+    {
+        for (int i=0; i<LLC_WAY; i++)
+            if (rrpv[set][i] == maxRRPV)
+                return i;
+
+        for (int i=0; i<LLC_WAY; i++)
+            rrpv[set][i]++;
+    }
+
+    // WE SHOULD NOT REACH HERE
+    assert(0);
+    return 0;
+}
+
+// use this function to print out your own stats at the end of simulation
+void CACHE::llc_replacement_final_stats()
+{
+
+}
