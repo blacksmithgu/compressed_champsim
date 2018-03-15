@@ -690,7 +690,8 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
             }
             else {
                 if (pf_buffer[cpu][i].conf >= FILL_THRESHOLD) { // Prefetch to the L2
-                    if (prefetch_line(ip, addr, pf_addr, FILL_L2)) {
+                    //if (prefetch_line(ip, addr, pf_addr, FILL_L2)) {
+                    if (kpc_prefetch_line(addr, pf_addr, FILL_L2, pf_buffer[cpu][i].delta, pf_buffer[cpu][i].depth, pf_buffer[cpu][i].signature, pf_buffer[cpu][i].conf)) {
                         PF_inflight[cpu]++; 
                         if (warmup_complete[cpu])
                         L2_PF_DEBUG(printf("L2_PREFETCH  cpu: %d base_cl: %lx pf_cl: %lx delta: %d d_sig: %x pf_sig: %x depth: %d conf: %d\n",
@@ -710,7 +711,8 @@ void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
                     }
                 }
                 else if (pf_buffer[cpu][i].conf >= PF_THRESHOLD) { // Prefetch to the LLC
-                    if (prefetch_line(ip, addr, pf_addr, FILL_LLC)) {
+                    //if (prefetch_line(ip, addr, pf_addr, FILL_LLC)) {
+                    if (kpc_prefetch_line(addr, pf_addr, FILL_LLC, pf_buffer[cpu][i].delta, pf_buffer[cpu][i].depth, pf_buffer[cpu][i].signature, pf_buffer[cpu][i].conf)) {
                         PF_inflight[cpu]++; 
                         if (warmup_complete[cpu])
                         L2_PF_DEBUG(printf("LLC_PREFETCH cpu: %d base_cl: %lx pf_cl: %lx delta: %d d_sig: %x pf_sig: %x depth: %d conf: %d\n",
@@ -778,4 +780,9 @@ void CACHE::l2c_prefetcher_final_stats()
         i, (100.0*useful_depth[cpu][i])/temp1, useful_depth[cpu][i], 
         i, (100.0*useless_depth[cpu][i])/temp2, useless_depth[cpu][i]);
     */
+}
+
+
+void CACHE::inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr)
+{
 }

@@ -1,7 +1,7 @@
 //
 // Data Prefetching Championship Simulator 2
 //
-#define DEGREE 1
+#define DEGREE 2
 #include <stdio.h>
 #include "cache.h"
 #include <map>
@@ -121,7 +121,7 @@ struct ISB_prefetcher_t
 
         if(phy_addr_Aplus1_exists)
             stream_divergence_count++;
-
+//#define CFIX
 #ifdef CFIX
         while(phy_addr_Aplus1_exists){
 #ifdef DEBUG
@@ -386,6 +386,11 @@ void CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
   // uncomment this line to see the information available to you when there is a cache fill event
 //  printf("%lld: Fill 0x%llx %d %d %d 0x%llx %d\n", get_current_cycle(0), addr, set, way, prefetch, evicted_addr, get_l2_mshr_occupancy(0));
 }
+
+void CACHE::inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr)
+{
+}
+
 
 
 void CACHE::l2c_prefetcher_final_stats()

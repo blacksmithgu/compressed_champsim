@@ -15,6 +15,10 @@ void CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
 
 }
 
+void CACHE::inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr)
+{
+}
+
 void CACHE::l2c_prefetcher_final_stats()
 {
 
