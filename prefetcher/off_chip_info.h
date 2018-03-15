@@ -155,6 +155,43 @@ class OffChipInfo
             }	
 
         }
+
+        void update_physical(uint64_t phy_addr, unsigned int str_addr)
+        {
+#ifdef DEBUG    
+            std::cout <<"In off_chip_info update, phy_addr is "<<phy_addr<<", str_addr is "<<str_addr<<"\n";
+#endif
+
+            //PS Map Update
+            std::map<uint64_t, PS_Entry*>::iterator ps_iter = ps_map.find(phy_addr);
+            if(ps_iter == ps_map.end()) {
+                PS_Entry* ps_entry = new PS_Entry();
+                ps_map[phy_addr] = ps_entry;
+                ps_map[phy_addr]->set(str_addr);
+            }
+            else {
+                ps_iter->second->set(str_addr);
+            }	
+        }
+
+        void update_structural(uint64_t phy_addr, unsigned int str_addr)
+        {
+#ifdef DEBUG    
+            (*outf)<<"In off_chip_info update, phy_addr is "<<phy_addr<<", str_addr is "<<str_addr<<"\n";
+#endif
+            //SP Map Update
+            std::map<unsigned int, SP_Entry*>::iterator sp_iter = sp_map.find(str_addr);
+            if(sp_iter == sp_map.end()) {
+                SP_Entry* sp_entry = new SP_Entry();
+                sp_map[str_addr] = sp_entry;
+                sp_map[str_addr]->set(phy_addr);
+            }
+            else {
+                sp_iter->second->set(phy_addr);
+            }	
+
+        }
+
         void invalidate(uint64_t phy_addr, unsigned int str_addr)
         {
 #ifdef DEBUG    

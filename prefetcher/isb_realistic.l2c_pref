@@ -12,14 +12,15 @@
 
 unsigned int total_access;
 unsigned int predictions;
+unsigned int prefetch_buffer_added;
+unsigned int prefetch_buffer_issue;
 unsigned int no_prediction;
 unsigned int stream_end;
 unsigned int no_translation;
 unsigned int reuse;
 uint64_t last_address;
 
-#define BUFFER_SIZE 128
-
+#define BUFFER_SIZE 1024
 //#define RESTRICT_REGION
 
 struct PrefetchBuffer
@@ -197,7 +198,12 @@ struct ISB_prefetcher_t
                 candidates.push_back(candidate_phy_addr);
             }
             else
+            {
+                ideal++;
+                prefetch_buffer_added++;
+                prefetch_buffer.add(str_addr_candidate);
                 no_translation++;
+            }
         }
 #else
         unsigned int num_prefetched = 0;
@@ -211,13 +217,17 @@ struct ISB_prefetcher_t
             bool ret = oci.get_physical_address(candidate_phy_addr, str_addr_candidate);
 
             if(ret)
-                //if(ret && ((candidate_phy_addr >> 12) == (trigger_phy_addr >> 12)) )
             {
                 candidates.push_back(candidate_phy_addr);
-
-                if(num_prefetched >= DEGREE)
-                    break;
+                num_prefetched++;
+            }   
+            else {
+                prefetch_buffer_added++;
+                prefetch_buffer.add(str_addr_candidate);
+                num_prefetched++;
             }
+            if(num_prefetched >= DEGREE)
+                break;
         }
 #endif
 
@@ -307,11 +317,14 @@ void CACHE::l2c_prefetcher_initialize()
     //printf("Knobs visible from prefetcher: %d %d %d\n", knob_scramble_loads, knob_small_llc, knob_low_bandwidth);
     total_access = 0;
     predictions = 0;
+    prefetch_buffer_issue = 0;
+    prefetch_buffer_added = 0;
     no_prediction = 0;
     stream_end = 0;
     no_translation = 0;
     
     reuse = 0;
+    cout << "AMC size: " << AMC_SIZE << endl;
 }
 
 void CACHE::l2c_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type)
@@ -387,6 +400,69 @@ void CACHE::l2c_prefetcher_cache_fill(uint64_t addr, uint32_t set, uint32_t way,
 //  printf("%lld: Fill 0x%llx %d %d %d 0x%llx %d\n", get_current_cycle(0), addr, set, way, prefetch, evicted_addr, get_l2_mshr_occupancy(0));
 }
 
+//Arguments do not include the least significant zero bits. For example, for a page size
+//of 4KB, the arguments do not include the last 12 bits that are zero.
+void CACHE::inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr)
+{
+#ifdef TLB_SYNC
+
+    //TODO: This function should be called when a TLB entry is evicte and be modified
+    //      appopriately to model the traffic and latency overhead of meta-data accesses.
+    //      It is also possible to model the effects of a limited meta-data cache without latency/traffic overheads.
+    assert(0);
+
+    //cout << "TLB eviction " << hex << insert_page_addr << " " << evict_page_addr << dec << endl;
+
+    evict_page_addr = (evict_page_addr << LOG2_PAGE_SIZE);
+    for(unsigned int i=0; i<PAGE_SIZE; i+=BLOCK_SIZE)
+    {
+        uint64_t evict_cl_addr = evict_page_addr + i;
+
+        uint32_t str_addr = 0;
+        if(isb.oci.get_structural_address(evict_cl_addr, str_addr))
+        {
+            //isb.oci.invalidate(evict_cl_addr, str_addr);
+            isb.oci.mark_not_tlb_resident(evict_cl_addr);
+            isb.oci.off_chip_mapping.update_physical(evict_cl_addr, str_addr);
+            isb.oci.off_chip_mapping.update_structural(evict_cl_addr, str_addr);
+
+            //cout << "Updating " << hex << str_addr << endl;
+        }
+    }
+
+    uint64_t base_page_addr = (insert_page_addr << LOG2_PAGE_SIZE);
+    for(unsigned int i=0; i<PAGE_SIZE; i+=BLOCK_SIZE)
+    {
+        uint64_t insert_cl_addr = base_page_addr + i;
+        //cout << "Consider cache line " << hex << insert_cl_addr << dec << endl;
+
+        uint32_t str_addr = 0;
+        if(isb.oci.off_chip_mapping.get_structural_address(insert_cl_addr, str_addr))
+        {
+            isb.oci.update(insert_cl_addr, str_addr);
+            isb.oci.mark_tlb_resident(insert_cl_addr);
+            //cout << "        Updating " << hex << str_addr << endl;
+        }
+    }
+
+    //cout << "Filter prefetch buffer " << endl;
+    for(unsigned int i=0; i<BUFFER_SIZE; i++)
+    {
+        uint64_t phy_addr;
+        if(isb.prefetch_buffer.valid[i] == false)
+            continue;
+
+        bool ret = isb.oci.get_physical_address(phy_addr, isb.prefetch_buffer.buffer[i]);
+        if(ret){
+            uint64_t candidate = phy_addr;
+            prefetch_line(0, candidate, candidate, FILL_LLC);
+            isb.prefetch_buffer.issue(i);
+            prefetch_buffer_issue++;
+        //    cout << hex << "       " << isb.prefetch_buffer.buffer[i] << " " << phy_addr << dec << " --- " << ret << endl;
+        }
+    }
+#endif
+}
 
 void CACHE::l2c_prefetcher_final_stats()
 {
@@ -399,7 +475,13 @@ void CACHE::l2c_prefetcher_final_stats()
     cout << "Stream end: " << stream_end << endl;
     cout << "No translation: " << no_translation << " " << 100*(double)no_translation/(double)total_access << endl;
     cout << "Predictions: " << predictions << " " << 100*(double)predictions/(double)total_access << endl;
+    cout << "Prefetch buffer added: " << prefetch_buffer_added << " " << 100*(double)prefetch_buffer_added/(double)total_access << endl;
+    cout << "Prefetch buffer predictions: " << prefetch_buffer_issue << " " << 100*(double)prefetch_buffer_issue/(double)total_access << endl;
     cout << endl << endl;
     cout << "Stream divergence: " << isb.stream_divergence_count << " " << 100*(double)(isb.stream_divergence_count)/(total_access) << endl;
     cout << "Stream divergence -- new stream: " << isb.stream_divergence_new_stream << endl;
+    cout << endl << endl;
+
+    cout << "PS-AMC evictions: " << isb.oci.ps_amc_evictions << endl;
+    cout << "SP-AMC evictions: " << isb.oci.sp_amc_evictions << endl;
 }

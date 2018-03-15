@@ -4,12 +4,20 @@
 #include <map>
 #include <vector>
 #include <assert.h>
+#include "off_chip_info.h"
+#include "cache.h"
 
 using namespace std;
 
-#define AMC_SIZE 16777216
+#define AMC_WAYS 16*16
+//TODO: Set AMC_SIZE equal to the number of TLB entries * number of cache lines per page
+#define AMC_SIZE STLB_SET*STLB_WAY*PAGE_SIZE/(BLOCK_SIZE)
 #define STREAM_MAX_LENGTH 1024
 #define STREAM_MAX_LENGTH_BITS 10
+
+//When TLB_SYNC is defined, the data will be maintained in an on-chip cache of size AMC_SIZE
+//TODO: undef TLB SYNC to try out an idealized version
+#define TLB_SYNC
 
 class OnChip_PS_Entry 
 {
@@ -98,6 +106,7 @@ class OnChipInfo
     unsigned int indexMask;
 
    public:
+    OffChipInfo off_chip_mapping;
     std::vector < std::map<uint64_t,OnChip_PS_Entry*> > ps_amc;
     std::vector < std::map<unsigned int,OnChip_SP_Entry*> > sp_amc;
 
@@ -117,6 +126,8 @@ class OnChipInfo
 
     void evict_ps_amc(unsigned int);
     void evict_sp_amc(unsigned int );
+    unsigned int ps_amc_evictions;
+    unsigned int sp_amc_evictions;
 };
 
 

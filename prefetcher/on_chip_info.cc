@@ -1,4 +1,6 @@
 #include "on_chip_info.h"
+#include <iostream>
+
 static inline unsigned int CRC_FloorLog2(unsigned int n)
 {
     unsigned int p = 0;
@@ -16,8 +18,10 @@ static inline unsigned int CRC_FloorLog2(unsigned int n)
 
 OnChipInfo::OnChipInfo() 
 {
+    sp_amc_evictions = 0;
+    ps_amc_evictions = 0;
     curr_timestamp = 0;
-    num_sets = AMC_SIZE/16;
+    num_sets = AMC_SIZE/AMC_WAYS;
     unsigned int indexShift = CRC_FloorLog2( num_sets );    
     indexMask  = (1 << indexShift) - 1;
     reset();
@@ -25,6 +29,7 @@ OnChipInfo::OnChipInfo()
 
 void OnChipInfo::reset()
 {
+    off_chip_mapping.reset();
     ps_amc.resize(num_sets);
     sp_amc.resize(num_sets);
     for (unsigned int i=0; i<num_sets; i++)
@@ -46,6 +51,14 @@ bool OnChipInfo::get_structural_address(uint64_t phy_addr, unsigned int& str_add
 	#ifdef DEBUG	
 	  (*outf)<<"In get_structural address of phy_addr "<<phy_addr<<", str addr not found\n";
 	#endif  
+        #ifndef TLB_SYNC
+            assert(0);
+        if(off_chip_mapping.get_structural_address(phy_addr, str_addr))
+        {
+            update(phy_addr, str_addr);
+            return true;
+        }
+        #endif
 	return false;
     }
     else {
@@ -79,6 +92,15 @@ bool OnChipInfo::get_physical_address(uint64_t& phy_addr, unsigned int str_addr)
         #ifdef DEBUG    
           (*outf)<<"In get_physical_address of str_addr "<<str_addr<<", phy addr not found\n";
         #endif
+        #ifndef TLB_SYNC
+            assert(0);
+        if(off_chip_mapping.get_physical_address(phy_addr, str_addr))
+        {
+            update(phy_addr, str_addr);
+            return true;
+        }
+        #endif
+
 	return false;
     }
     else {
@@ -139,8 +161,13 @@ void OnChipInfo::evict_ps_amc(unsigned int setId)
     std::map<uint64_t, OnChip_PS_Entry*>::iterator ps_iter = ps_map.find(evict_addr);
     //std::cout << "LRU: " << std::hex << evict_addr << std::dec << std::endl;
     assert(ps_iter != ps_map.end());
+    //cout << "Update off chip: " << hex << evict_addr << " " << ps_iter->second->str_addr << dec << endl;
+
+    off_chip_mapping.update_physical(evict_addr, ps_iter->second->str_addr);
     delete ps_iter->second;
     ps_map.erase(ps_iter);
+
+    ps_amc_evictions++;
 }
 
 void OnChipInfo::evict_sp_amc(unsigned int setId)
@@ -181,8 +208,11 @@ void OnChipInfo::evict_sp_amc(unsigned int setId)
     //std::cout << "LRU: " << std::hex << min_addr << std::dec << std::endl;
     std::map<unsigned int, OnChip_SP_Entry*>::iterator sp_iter = sp_map.find(evict_addr);
     assert(sp_iter != sp_map.end());
+    off_chip_mapping.update_structural(sp_iter->second->phy_addr, evict_addr);
     delete sp_iter->second;
     sp_map.erase(sp_iter);
+    
+    sp_amc_evictions++;
 }
 
 void OnChipInfo::update(uint64_t phy_addr, unsigned int str_addr)
@@ -197,10 +227,10 @@ void OnChipInfo::update(uint64_t phy_addr, unsigned int str_addr)
     unsigned int sp_setId = str_addr & indexMask;
     std::map<unsigned int, OnChip_SP_Entry*>& sp_map = sp_amc[sp_setId];
 
-    while (ps_map.size() > 16)
+    while (ps_map.size() > AMC_WAYS)
         evict_ps_amc(ps_setId);
 
-    while (sp_map.size() > 16)
+    while (sp_map.size() > AMC_WAYS)
         evict_sp_amc(sp_setId);
 
     //PS Map Update
