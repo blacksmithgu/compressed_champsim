@@ -147,6 +147,14 @@ public:
         training_threshold = target->training_threshold;
         positive_count = target->positive_count;
     }
+
+    void print(uint64_t pc)
+    {
+        cout << bias[pc] << " -- ";
+        for(auto iter = weights[pc].begin(); iter != weights[pc].end(); iter++)
+            cout << "(" << iter->first << ", " << iter->second  << ")  ";
+        cout << endl;
+    }
 };
 
 class MULTIPLE_PERCEPTRON_PREDICTOR
@@ -486,6 +494,11 @@ public:
             cout << "get prediction2 done1" << endl;
         }
         return result;
+    }
+
+    void print(uint64_t pc)
+    {
+        agent[current].print(pc);
     }
 };
 

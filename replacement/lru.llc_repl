@@ -45,11 +45,11 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
     return lru_update(set, way);
 }
-bool CACHE::is_fake_hit(uint64_t full_addr)
+/*bool CACHE::is_fake_hit(uint64_t full_addr)
 {
     uint64_t paddr = (full_addr >> 6) << 6;
     return false;
-}
+}*/
 
 
 void CACHE::llc_replacement_final_stats()

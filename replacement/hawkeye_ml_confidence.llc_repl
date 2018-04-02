@@ -26,7 +26,7 @@
 #include <math.h>
 
 // if single core, comment the line below
-#define MULTICORE
+//#define MULTICORE
 #define HISTORY_LENGTH 20
 
 #ifdef MULTICORE
@@ -98,9 +98,61 @@ OPTgen perset_optgen[LLC_SETS]; // per-set occupancy vectors; we only use 64 of 
     #define SAMPLED_CACHE_SIZE 2800
 #endif
 
-map<uint64_t, ADDR_INFO> addr_history; // Sampler
+#define SAMPLER_WAYS 8
+#define SAMPLER_SETS SAMPLED_CACHE_SIZE/SAMPLER_WAYS
+
+vector<map<uint64_t, ADDR_INFO> > addr_history; // Sampler
 unsigned int hit_accurate[NUM_CPUS], hit_inaccurate[NUM_CPUS];
 unsigned int miss_accurate[NUM_CPUS], miss_inaccurate[NUM_CPUS];
+unsigned int no_feedback_accurate[NUM_CPUS], no_feedback_inaccurate[NUM_CPUS];
+unsigned int hit_predictions[NUM_CPUS], miss_predictions[NUM_CPUS];
+
+struct PCSTATS
+{
+    unsigned int hit_accurate, miss_accurate, hit_inaccurate, miss_inaccurate;
+    unsigned int no_feedback_accurate, no_feedback_inaccurate;
+    unsigned int hit_predictions, miss_predictions;
+
+    void init()
+    {
+        hit_accurate = 0;
+        hit_inaccurate = 0;
+        miss_accurate = 0;
+        miss_inaccurate = 0;
+        no_feedback_accurate = 0;
+        no_feedback_inaccurate = 0;
+        hit_predictions = 0;
+        miss_predictions = 0;
+    }
+
+    unsigned int accesses()
+    {
+        return (hit_predictions + miss_predictions);
+        //return (hit_accurate + miss_accurate + no_feedback_accurate + hit_inaccurate + miss_inaccurate + no_feedback_inaccurate);
+    }
+        
+    double feedback_accuracy()
+    {
+        return 100*(double)(hit_accurate + miss_accurate)/(double)(hit_accurate + miss_accurate + hit_inaccurate + miss_inaccurate);
+    }
+
+    double total_accuracy()
+    {   
+        assert(no_feedback_accurate == 0);
+        no_feedback_accurate = miss_predictions - miss_accurate - hit_inaccurate;
+        assert(miss_predictions >= (miss_accurate + hit_inaccurate));
+        //cout << endl << "****" << miss_predictions << " " << miss_accurate << " " << miss_inaccurate << "*****" << endl;
+        return 100*(double)(hit_accurate + miss_accurate + no_feedback_accurate)/(double)(hit_accurate + miss_accurate + hit_inaccurate + miss_inaccurate + no_feedback_accurate + no_feedback_inaccurate);
+    }
+
+    void print()
+    {
+        cout << feedback_accuracy() << " " << total_accuracy() << " -- " << 100*(double)hit_accurate/(double)(hit_accurate + hit_inaccurate) << " " << 100*(double)miss_accurate/(double)(miss_accurate + miss_inaccurate) << " " << (double)no_feedback_accurate/(double)(no_feedback_accurate + no_feedback_inaccurate) << " -- " << (hit_accurate + hit_inaccurate) << " " << (miss_accurate + miss_inaccurate) << " " << (no_feedback_accurate + no_feedback_inaccurate) << endl;
+    }
+};
+
+map<uint64_t, PCSTATS> per_pc_stats;
+
 int num_train;
 int evicted_by_wb[NUM_CPUS];
 int num_detraining[NUM_CPUS], num_correct_detraining[NUM_CPUS], num_wrong_detraining[NUM_CPUS];
@@ -121,7 +173,9 @@ void CACHE::llc_initialize_replacement()
         perset_optgen[i].init(LLC_WAYS-2);
     }
 
-    addr_history.clear();
+    addr_history.resize(SAMPLER_SETS);
+    for (int i=0; i<SAMPLER_SETS; i++) 
+        addr_history[i].clear();
 
     for(int i = 0; i < NUM_CPUS; i++)
     {
@@ -130,6 +184,10 @@ void CACHE::llc_initialize_replacement()
         hit_inaccurate[i] = 0;
         miss_accurate[i] = 0;
         miss_inaccurate[i] = 0;
+        hit_predictions[i] = 0;
+        miss_predictions[i] = 0;
+        no_feedback_accurate[i] = 0;
+        no_feedback_inaccurate[i] = 0;
         evicted_by_wb[i] = 0;
         num_detraining[i] = 0;
         num_correct_detraining[i] = 0;
@@ -153,10 +211,10 @@ void CACHE::llc_initialize_replacement()
 uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type)
 {
     // look for the maxRRPV line
-    for (uint32_t i=0; i<LLC_WAYS; i++){
+    for (uint32_t i=0; i<LLC_WAYS; i++)
         if (rrpv[set][i] == maxRRPV)
             return i;
-    }
+
     //If we cannot find a cache-averse line, we evict the oldest cache-friendly line
     uint32_t max_rrip = 0;
     int32_t lru_victim = -1;
@@ -173,34 +231,48 @@ uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, c
     //The predictor is trained negatively on LRU evictions
     if( SAMPLED_SET(set) )
     {
-        assert(addresses[set][lru_victim] != 0);
-        if(addr_history.find(addresses[set][lru_victim]) == addr_history.end())
-            ;
-        else
+        uint32_t sampler_set = ((addresses[set][lru_victim]) >> 6) % SAMPLER_SETS; 
+        //uint64_t sampler_tag = CRC((addresses[set][lru_victim]) >> 12) % 256;
+        uint64_t sampler_tag = (addresses[set][lru_victim]);
+
+        //assert(addresses[set][lru_victim] != 0);
+        assert(sampler_set < SAMPLER_SETS);
+        if(addr_history[sampler_set].find(sampler_tag) != addr_history[sampler_set].end())
         {
-            uint64_t private_cpu = addr_history[addresses[set][lru_victim]].cpu;
+            uint64_t private_cpu = addr_history[sampler_set][sampler_tag].cpu;
+            assert(addr_history[sampler_set][sampler_tag].last_prediction != 0);
+            assert(addr_history[sampler_set][sampler_tag].PC == signatures[set][lru_victim]);
+
             demand_predictor->single_core_predictors[private_cpu]->decrement(
                 signatures[set][lru_victim], 
-                addr_history[addresses[set][lru_victim]].context, 
+                addr_history[sampler_set][sampler_tag].context, 
                 addresses[set][lru_victim], 
-                addr_history[addresses[set][lru_victim]].prev_result, 
-                addr_history[addresses[set][lru_victim]].detrained);
+                addr_history[sampler_set][sampler_tag].prev_result, 
+                addr_history[sampler_set][sampler_tag].detrained);
             // count writebacks
             if (type == WRITEBACK)
                 evicted_by_wb[private_cpu]++;
             
             // assumes it is a miss for the cpu being evicted
-            if(warmup_complete[private_cpu])
+            //if(warmup_complete[private_cpu])
+            //{
+            assert(per_pc_stats.find(signatures[set][lru_victim]) != per_pc_stats.end());
+            if(addr_history[sampler_set][sampler_tag].last_prediction == 0)
             {
-                if(addr_history[addresses[set][lru_victim]].last_prediction == 0)
-                    miss_accurate[private_cpu]++;
-                else
-                    miss_inaccurate[private_cpu]++;
+                assert(0);
+                no_feedback_accurate[private_cpu]++;
+                per_pc_stats[signatures[set][lru_victim]].no_feedback_accurate++;
             }
+            else
+            {
+                no_feedback_inaccurate[private_cpu]++;
+                per_pc_stats[signatures[set][lru_victim]].no_feedback_inaccurate++;
+            }
+            //}
 
             num_detraining[private_cpu]++;
   
-            addr_history[addresses[set][lru_victim]].detrained = true;
+            addr_history[sampler_set][sampler_tag].detrained = true;
         }  
     }
     return lru_victim;
@@ -210,22 +282,37 @@ uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, c
     return 0;
 }
 
-void replace_addr_history_element()
+void replace_addr_history_element(unsigned int sampler_set)
 {
     uint64_t lru_addr = 0;
-    uint64_t lru_time = 10000000;
     
-    for(map<uint64_t, ADDR_INFO>::iterator it=addr_history.begin(); it != addr_history.end(); it++)
+    for(map<uint64_t, ADDR_INFO>::iterator it=addr_history[sampler_set].begin(); it != addr_history[sampler_set].end(); it++)
     {
-        if((it->second).last_quanta < lru_time)
+   //     uint64_t timer = (it->second).last_quanta;
+
+        if((it->second).lru == (SAMPLER_WAYS-1))
         {
-            lru_time =  (it->second).last_quanta;
+            //lru_time =  (it->second).last_quanta;
             lru_addr = it->first;
+            break;
         }
     }
-    assert(lru_addr != 0);
-    addr_history.erase(lru_addr);
+
+    addr_history[sampler_set].erase(lru_addr);
 }
+
+void update_addr_history_lru(unsigned int sampler_set, unsigned int curr_lru)
+{
+    for(map<uint64_t, ADDR_INFO>::iterator it=addr_history[sampler_set].begin(); it != addr_history[sampler_set].end(); it++)
+    {
+        if((it->second).lru < curr_lru)
+        {
+            (it->second).lru++;
+            assert((it->second).lru < SAMPLER_WAYS); 
+        }
+    }
+}
+
 
 // called on every cache hit and cache fill
 void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency)
@@ -237,27 +324,36 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         {
             //rrpv[set][way] = maxRRPV-1;
             //rrpv[set][way] = maxRRPV;
-            //addresses[set][way] = paddr;
+            addresses[set][way] = 0;
+            signatures[set][way] = 0;
         }
+
         return;
     }
+
 
     //If we are sampling, OPTgen will only see accesses from sampled sets
     if(SAMPLED_SET(set))
     {
+    cout << set << " " << hex << paddr << dec;
         //The current timestep 
         uint64_t curr_quanta = perset_mytimer[set] % OPTGEN_VECTOR_SIZE;
+
+        uint32_t sampler_set = (paddr >> 6) % SAMPLER_SETS; 
+        //uint64_t sampler_tag = CRC(paddr >> 12) % 256;
+        uint64_t sampler_tag = paddr;
+        assert(sampler_set < SAMPLER_SETS);
+
         // This line has been used before. Since the right end of a usage interval is always 
         //a demand, ignore prefetches
-        if(addr_history.find(paddr) != addr_history.end())
+        if(addr_history[sampler_set].find(sampler_tag) != addr_history[sampler_set].end())
         {
             //Ugliness to take care of the wrapped around liveness vevtor
             unsigned int curr_timer = perset_mytimer[set];
-            if(curr_timer < addr_history[paddr].last_quanta)
+            if(curr_timer < addr_history[sampler_set][sampler_tag].last_quanta)
                curr_timer = curr_timer + TIMER_SIZE;
-            bool wrap =  ((curr_timer - addr_history[paddr].last_quanta) > OPTGEN_VECTOR_SIZE);
-            uint64_t last_quanta = addr_history[paddr].last_quanta % OPTGEN_VECTOR_SIZE;
-            //assert(curr_quanta >= addr_history[paddr].last_quanta);
+            bool wrap =  ((curr_timer - addr_history[sampler_set][sampler_tag].last_quanta) > OPTGEN_VECTOR_SIZE);
+            uint64_t last_quanta = addr_history[sampler_set][sampler_tag].last_quanta % OPTGEN_VECTOR_SIZE;
 
             //Train the predictor positively because OPT would have cached this line
             if(hit)
@@ -265,63 +361,89 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
             //if we see a reuse, we reverse the effect of previous detraining based on the last prediction
             //no matter whether should be cached
-            if(warmup_complete[cpu])
+            //if(warmup_complete[cpu])
+            //{
+            if(addr_history[sampler_set][sampler_tag].detrained)
             {
-                if(addr_history[paddr].detrained)
+                assert(per_pc_stats.find(addr_history[sampler_set][sampler_tag].PC) != per_pc_stats.end());
+                if(addr_history[sampler_set][sampler_tag].last_prediction == 0)
                 {
-                    if(addr_history[paddr].last_prediction == 0)
-                        miss_accurate[cpu]--;
-                    else
-                        miss_inaccurate[cpu]--;
+                    assert(0);
+                    no_feedback_accurate[cpu]--;
+                    per_pc_stats[addr_history[sampler_set][sampler_tag].PC].no_feedback_accurate--;
+                }
+                else
+                {
+                    assert(no_feedback_inaccurate[cpu] > 0);
+                    no_feedback_inaccurate[cpu]--;
+                    assert(per_pc_stats[addr_history[sampler_set][sampler_tag].PC].no_feedback_inaccurate > 0);
+                    per_pc_stats[addr_history[sampler_set][sampler_tag].PC].no_feedback_inaccurate--;
                 }
             }
+            //}
 
             if( !wrap && perset_optgen[set].should_cache(curr_quanta, last_quanta))
             {
+                cout << dec << " 1";
                 num_optimal_hits[cpu]++;
                 if(hit)
                     num_both_hits[cpu]++;
 
-                if(addr_history[paddr].detrained)
+                if(addr_history[sampler_set][sampler_tag].detrained)
                     num_wrong_detraining[cpu]++;
               
-                if(warmup_complete[cpu])
-                {
-                    if(addr_history[paddr].last_prediction > 0)
+                //if(warmup_complete[cpu])
+                //{
+                    assert(per_pc_stats.find(addr_history[sampler_set][sampler_tag].PC) != per_pc_stats.end());
+                    if(addr_history[sampler_set][sampler_tag].last_prediction > 0) 
+                    {
                         hit_accurate[cpu]++;                        
+                        per_pc_stats[addr_history[sampler_set][sampler_tag].PC].hit_accurate++;
+                    }
                     else
+                    {
                         hit_inaccurate[cpu]++;
-                }
+                        per_pc_stats[addr_history[sampler_set][sampler_tag].PC].hit_inaccurate++;
+                    }
+                //}
 
                 demand_predictor->single_core_predictors[cpu]->increment(
-                    addr_history[paddr].PC, 
-                    addr_history[paddr].context, 
+                    addr_history[sampler_set][sampler_tag].PC, 
+                    addr_history[sampler_set][sampler_tag].context, 
                     paddr,
-                    addr_history[paddr].prev_result, 
-                    addr_history[paddr].detrained);
+                    addr_history[sampler_set][sampler_tag].prev_result, 
+                    addr_history[sampler_set][sampler_tag].detrained);
 
                 num_train++;
 
             }
             else
             {
-                if(addr_history[paddr].detrained)
+                cout << dec << " 0";
+                if(addr_history[sampler_set][sampler_tag].detrained)
                     num_correct_detraining[cpu]++;
                 
-                if(warmup_complete[cpu])
-                {
-                    if(addr_history[paddr].last_prediction == 0)
+                //if(warmup_complete[cpu])
+                //{
+                    assert(per_pc_stats.find(addr_history[sampler_set][sampler_tag].PC) != per_pc_stats.end());
+                    if(addr_history[sampler_set][sampler_tag].last_prediction == 0)
+                    {
                         miss_accurate[cpu]++;
+                        per_pc_stats[addr_history[sampler_set][sampler_tag].PC].miss_accurate++;
+                    }
                     else
+                    {
                         miss_inaccurate[cpu]++;
-                }
+                        per_pc_stats[addr_history[sampler_set][sampler_tag].PC].miss_inaccurate++;
+                    }
+                //}
                 // Train the predictor negatively because OPT would not have cached this line
                 demand_predictor->single_core_predictors[cpu]->decrement(
-                    addr_history[paddr].PC, 
-                    addr_history[paddr].context, 
+                    addr_history[sampler_set][sampler_tag].PC, 
+                    addr_history[sampler_set][sampler_tag].context, 
                     paddr, 
-                    addr_history[paddr].prev_result, 
-                    addr_history[paddr].detrained);
+                    addr_history[sampler_set][sampler_tag].prev_result, 
+                    addr_history[sampler_set][sampler_tag].detrained);
 
                 num_train++;
             }
@@ -333,29 +455,46 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
         {
 #ifdef SAMPLING
             // Find a victim from the sampled cache if we are sampling
-            assert(addr_history.size() <= SAMPLED_CACHE_SIZE);
-            if(addr_history.size() == SAMPLED_CACHE_SIZE) 
-                replace_addr_history_element();
-            assert(addr_history.size() < SAMPLED_CACHE_SIZE);
+            assert(addr_history[sampler_set].size() < SAMPLER_WAYS);
+            if(addr_history[sampler_set].size() == SAMPLER_WAYS) 
+                replace_addr_history_element(sampler_set);
+
+            assert(addr_history[sampler_set].size() < SAMPLER_WAYS);
 #endif
             //Initialize a new entry in the sampler
-            addr_history[paddr].init(curr_quanta);
+            addr_history[sampler_set][sampler_tag].init(curr_quanta);
             perset_optgen[set].add_access(curr_quanta);
         }
+        cout << endl;
 
         // Get Hawkeye's prediction for this line
         Result result = demand_predictor->single_core_predictors[cpu]->get_prediction(ip, curr_histories[cpu], paddr);
+        int new_prediction = result.prediction[result.current];
             
         // Update the sampler with the timestamp, PC and our prediction
         // For prefetches, the PC will represent the trigger PC
-        addr_history[paddr].update(perset_mytimer[set], ip, result.prediction[result.current]);
-        //addr_history[paddr].update(perset_mytimer[set], ip, new_prediction);
-        addr_history[paddr].lru = 0;
-        addr_history[paddr].context = curr_histories[cpu];
-        addr_history[paddr].detrained = false;
-        addr_history[paddr].prev_result = result;
-        addr_history[paddr].cpu = cpu;
-        
+        addr_history[sampler_set][sampler_tag].update(perset_mytimer[set], ip, result.prediction[result.current]);
+        addr_history[sampler_set][sampler_tag].lru = 0;
+        addr_history[sampler_set][sampler_tag].context = curr_histories[cpu];
+        addr_history[sampler_set][sampler_tag].detrained = false;
+        addr_history[sampler_set][sampler_tag].prev_result = result;
+        addr_history[sampler_set][sampler_tag].cpu = cpu;
+       
+        if(per_pc_stats.find(ip) == per_pc_stats.end())
+            per_pc_stats[ip].init();
+
+        if(new_prediction > 0) 
+        {
+            hit_predictions[cpu]++;
+            per_pc_stats[ip].hit_predictions++;
+        }
+        else 
+        {
+            miss_predictions[cpu]++;
+            per_pc_stats[ip].miss_predictions++;
+        }
+
+
         //Increment the set timer
         perset_mytimer[set] = (perset_mytimer[set]+1) % TIMER_SIZE;
     }
@@ -414,6 +553,9 @@ void CACHE::llc_replacement_final_stats()
         accesses += perset_optgen[i].access;
         hits += perset_optgen[i].get_num_opt_hits();
      //   traffic += perset_optgen[i].get_traffic();
+
+        if(perset_optgen[i].access != 0)
+            cout << i << " " << perset_optgen[i].access << " " << perset_optgen[i].get_num_opt_hits() << endl;
     }
 
     std::cout << "OPTgen accesses: " << accesses << std::endl;
@@ -444,12 +586,20 @@ void CACHE::llc_replacement_final_stats()
         // cout << "wrong detraining Ratio: " << 100 * (double)num_wrong_detraining[i] / (double)num_detraining[i] << endl;
         // cout << endl;
 
-        cout << "hit accuracy: " << 100*(double)hit_accurate[i] / (double)(hit_accurate[i] + hit_inaccurate[i]) << endl;
-        cout << "total ground truth hit: " << (hit_accurate[i] + hit_inaccurate[i]) << endl; 
-        cout << "miss ccuracy: " << 100*(double)miss_accurate[i] / (double)(miss_accurate[i] + miss_inaccurate[i]) << endl;
-        cout << "total ground truth miss: " << (miss_accurate[i] + miss_inaccurate[i]) << endl;
+        cout << "Hit Accuracy: " << 100*(double)hit_accurate[i] / (double)(hit_accurate[i] + hit_inaccurate[i]) << endl;
+        cout << "Total Ground Truth Hits: " << (hit_accurate[i] + hit_inaccurate[i]) << endl; 
+        cout << "Miss Accuracy: " << 100*(double)miss_accurate[i] / (double)(miss_accurate[i] + miss_inaccurate[i]) << endl;
+        cout << "Total Ground Truth Misses: " << (miss_accurate[i] + miss_inaccurate[i]) << endl;
+
+        assert(no_feedback_accurate[i] == 0);
+        assert(miss_predictions[i] >= (miss_accurate[i] + hit_inaccurate[i]));
+        no_feedback_accurate[i] = miss_predictions[i] - miss_accurate[i] - hit_inaccurate[i];
+        cout << "No Feedback Accuracy: " << 100*(double)(no_feedback_accurate[i])/ (double)(no_feedback_accurate[i] + no_feedback_inaccurate[i]) << endl;
+        cout << "Num No Feedback: " << (no_feedback_accurate[i] + no_feedback_inaccurate[i]) << endl;
+
         
-        cout << "overall accuracy: " << 100*(double)(hit_accurate[i]+miss_accurate[i]) / (double)(hit_accurate[i] + hit_inaccurate[i] + miss_accurate[i] + miss_inaccurate[i]) << endl;
+        cout << "Overall Accuracy: " << 100*(double)(hit_accurate[i]+miss_accurate[i]) / (double)(hit_accurate[i] + hit_inaccurate[i] + miss_accurate[i] + miss_inaccurate[i]) << endl;
+        cout << "Overall Accuracy including no feedback: " << 100*(double)(hit_accurate[i]+miss_accurate[i]+no_feedback_accurate[i]) / (double)(hit_accurate[i] + hit_inaccurate[i] + miss_accurate[i] + miss_inaccurate[i] + no_feedback_accurate[i] + no_feedback_inaccurate[i]) << endl;
 
         cout << "threshold history: " << endl;
         for(int j = 0; j < num_interval; j++)
@@ -473,5 +623,19 @@ void CACHE::llc_replacement_final_stats()
 
     cout << "number of training: " << num_train << endl;
     cout << endl << endl;
+    cout << endl << endl;
+    cout << endl << endl;
+    cout << endl << endl;
+    for(map<uint64_t, PCSTATS>::iterator it=per_pc_stats.begin(); it != per_pc_stats.end(); it++)
+    {
+        //TODO: Change CPU
+        if( (double)((it->second).accesses()) < 0.02*(double)(hit_accurate[0] + miss_accurate[0] + hit_inaccurate[0] + miss_inaccurate[0] + no_feedback_accurate[0] + no_feedback_inaccurate[0]))
+            continue;
+
+        cout << it->first << " ";
+        (it->second).print();
+        demand_predictor->single_core_predictors[0]->print(it->first);
+        cout << endl;
+    }
     return;
 }
