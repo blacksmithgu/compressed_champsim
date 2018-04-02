@@ -18,6 +18,7 @@ uint64_t warmup_instructions     = 1000000,
 
 time_t start_time;
 
+double ped_coefficient;
 string outputDecisionFile;
 string accessHistoryFile;
 unsigned obol_cost_ratio = 4;
@@ -362,6 +363,10 @@ uint64_t va_to_pa(uint32_t cpu, uint64_t instr_id, uint64_t va, uint64_t unique_
                 ooo_cpu[cpu].L1D.invalidate_entry(cl_addr);
                 ooo_cpu[cpu].L2C.invalidate_entry(cl_addr);
                 uncore.LLC.invalidate_entry(cl_addr);
+#ifdef COMPRESSED_CACHE
+                if(uncore.LLC.is_compressed)
+                    uncore.LLC.invalidate_entry_cc(cl_addr);
+#endif
             }
 
             // swap complete
@@ -483,6 +488,7 @@ int main(int argc, char** argv)
             {"access_history", required_argument, 0, 'a'},
             {"cost_ratio", required_argument, 0, 'r'},
             {"cost_threshold", required_argument, 0, 'm'},
+            {"ped_coefficient", required_argument, 0, 'p'},
             {0, 0, 0, 0}      
         };
 
@@ -527,6 +533,9 @@ int main(int argc, char** argv)
                 break;
             case 'm':
                 obol_cost_threshold = atol(optarg);
+                break;
+            case 'p':
+                ped_coefficient = atol(optarg);
                 break;
             default:
                 abort();
@@ -693,6 +702,9 @@ int main(int argc, char** argv)
         uncore.LLC.upper_level_icache[i] = &ooo_cpu[i].L2C;
         uncore.LLC.upper_level_dcache[i] = &ooo_cpu[i].L2C;
         uncore.LLC.lower_level = &uncore.DRAM;
+        #ifdef COMPRESSED_CACHE
+            uncore.LLC.configure_compressed_cache();
+        #endif
 
         // OFF-CHIP DRAM
         uncore.DRAM.fill_level = FILL_DRAM;

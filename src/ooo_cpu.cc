@@ -185,6 +185,7 @@ void O3_CPU::handle_branch()
                     arch_instr.destination_registers[i] = current_instr.destination_registers[i];
                     arch_instr.destination_memory[i] = current_instr.destination_memory[i];
                     arch_instr.destination_virtual_address[i] = current_instr.destination_memory[i];
+                    memcpy((arch_instr.destination_cache_line_value[i]), (current_instr.destination_cache_line_value[i]), CACHE_LINE_BYTES);
 
                     if (arch_instr.destination_registers[i])
                         num_reg_ops++;
@@ -211,6 +212,7 @@ void O3_CPU::handle_branch()
                 for (int i=0; i<NUM_INSTR_SOURCES; i++) {
                     arch_instr.source_registers[i] = current_instr.source_registers[i];
                     arch_instr.source_memory[i] = current_instr.source_memory[i];
+                    memcpy((arch_instr.source_cache_line_value[i]), (current_instr.source_cache_line_value[i]), CACHE_LINE_BYTES);
                     arch_instr.source_virtual_address[i] = current_instr.source_memory[i];
 
                     if (arch_instr.source_registers[i])
@@ -876,6 +878,7 @@ void O3_CPU::add_load_queue(uint32_t rob_index, uint32_t data_index)
     ROB.entry[rob_index].lq_index[data_index] = lq_index;
     LQ.entry[lq_index].instr_id = ROB.entry[rob_index].instr_id;
     LQ.entry[lq_index].virtual_address = ROB.entry[rob_index].source_memory[data_index];
+    memcpy((LQ.entry[lq_index].program_data), ROB.entry[rob_index].source_cache_line_value[data_index], CACHE_LINE_BYTES);
     LQ.entry[lq_index].ip = ROB.entry[rob_index].ip;
     LQ.entry[lq_index].data_index = data_index;
     LQ.entry[lq_index].rob_index = rob_index;
@@ -1060,6 +1063,7 @@ void O3_CPU::add_store_queue(uint32_t rob_index, uint32_t data_index)
     ROB.entry[rob_index].sq_index[data_index] = sq_index;
     SQ.entry[sq_index].instr_id = ROB.entry[rob_index].instr_id;
     SQ.entry[sq_index].virtual_address = ROB.entry[rob_index].destination_memory[data_index];
+    memcpy(SQ.entry[sq_index].program_data, ROB.entry[rob_index].destination_cache_line_value[data_index], CACHE_LINE_BYTES);
     SQ.entry[sq_index].ip = ROB.entry[rob_index].ip;
     SQ.entry[sq_index].data_index = data_index;
     SQ.entry[sq_index].rob_index = rob_index;
@@ -1348,6 +1352,7 @@ int O3_CPU::execute_load(uint32_t rob_index, uint32_t lq_index, uint32_t data_in
     data_packet.address = LQ.entry[lq_index].physical_address >> LOG2_BLOCK_SIZE;
     data_packet.full_addr = LQ.entry[lq_index].physical_address;
     data_packet.instr_id = LQ.entry[lq_index].instr_id;
+    memcpy(data_packet.program_data, LQ.entry[lq_index].program_data, CACHE_LINE_BYTES);
     data_packet.rob_index = LQ.entry[lq_index].rob_index;
     data_packet.ip = LQ.entry[lq_index].ip;
     data_packet.type = LOAD;
@@ -1852,6 +1857,7 @@ void O3_CPU::retire_rob()
                         data_packet.sq_index = sq_index;
                         data_packet.address = SQ.entry[sq_index].physical_address >> LOG2_BLOCK_SIZE;
                         data_packet.full_addr = SQ.entry[sq_index].physical_address;
+                        memcpy(data_packet.program_data, SQ.entry[sq_index].program_data, CACHE_LINE_BYTES);
                         data_packet.instr_id = SQ.entry[sq_index].instr_id;
                         data_packet.rob_index = SQ.entry[sq_index].rob_index;
                         data_packet.ip = SQ.entry[sq_index].ip;

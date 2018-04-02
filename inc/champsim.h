@@ -71,6 +71,8 @@
 #define DRAM_PAGES ((DRAM_SIZE<<10)>>2) 
 //#define DRAM_PAGES 10
 
+//#define COMPRESSED_CACHE
+
 using namespace std;
 
 extern uint8_t warmup_complete[NUM_CPUS], 

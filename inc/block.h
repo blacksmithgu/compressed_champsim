@@ -25,6 +25,8 @@ class BLOCK {
              cpu,
              instr_id;
 
+    char program_data[CACHE_LINE_BYTES];
+
     // replacement state
     uint32_t lru;
 
@@ -49,6 +51,71 @@ class BLOCK {
         lru = 0;
     };
 };
+
+#ifdef COMPRESSED_CACHE
+class COMPRESSED_CACHE_BLOCK {
+  public:
+
+    /*
+    If CF == 1:
+      we only care about valid[0] and blkId[0]
+    CF == 2:
+      valid[0] and valid[1] store the validity of blkId[0] and blkId[1], respectively
+    CF == 4:
+      valid[i] stores the validity of blkId[i]
+    */
+    uint8_t valid[4],
+            prefetch[4],
+            dirty[4],
+            used[4];
+
+    int delta,
+        depth,
+        signature,
+        confidence;
+
+    uint32_t blkId[4];
+    uint64_t compressionFactor;
+    uint64_t sbTag;
+
+    uint64_t address[4],
+             full_addr[4],
+             tag[4],
+             data[4],
+             cpu[4],
+             instr_id[4];
+
+    char program_data[4][CACHE_LINE_BYTES];
+    // replacement state
+    uint32_t lru;
+
+    COMPRESSED_CACHE_BLOCK() {
+        for(unsigned int i=0; i<4; i++) {
+            valid[i] = 0;
+            prefetch[i] = 0;
+            dirty[i] = 0;
+            used[i] = 0;
+            address[i] = 0;
+            full_addr[i] = 0;
+            tag[i] = 0;
+            data[i] = 0;
+            cpu[i] = 0;
+            instr_id[i] = 0;
+
+            blkId[i] = 4;
+        }
+
+        delta = 0;
+        depth = 0;
+        signature = 0;
+        confidence = 0;
+        compressionFactor = 1;
+        sbTag = 0;
+
+        lru = 0;
+    };
+};
+#endif
 
 // DRAM CACHE BLOCK
 class DRAM_ARRAY {
@@ -108,7 +175,10 @@ class PACKET {
              event_cycle,
              latency, 
              last_update_cycle,
+             
              effective_latency;
+
+    char program_data[CACHE_LINE_BYTES];
 
     PACKET() {
         instruction = 0;
@@ -329,6 +399,8 @@ class LSQ_ENTRY {
              physical_address,
              ip,
              event_cycle;
+
+    char program_data[CACHE_LINE_BYTES];
 
     uint32_t rob_index, data_index, sq_index;
 

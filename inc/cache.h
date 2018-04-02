@@ -85,9 +85,13 @@ class CACHE : public MEMORY {
     const uint32_t NUM_SET, NUM_WAY, NUM_LINE, WQ_SIZE, RQ_SIZE, PQ_SIZE, MSHR_SIZE;
     uint32_t LATENCY;
     BLOCK **block;
+#ifdef COMPRESSED_CACHE
+    COMPRESSED_CACHE_BLOCK **compressed_cache_block;
+#endif
     int fill_level;
     uint32_t MAX_READ, MAX_FILL;
     uint8_t cache_type;
+    bool is_compressed;
 
     // prefetch stats
     uint64_t pf_requested,
@@ -110,6 +114,7 @@ class CACHE : public MEMORY {
              roi_hit[NUM_CPUS][NUM_TYPES],
              roi_miss[NUM_CPUS][NUM_TYPES];
     
+    uint32_t compressible4, compressible2, uncompressible;
     // constructor
     CACHE(string v1, uint32_t v2, int v3, uint32_t v4, uint32_t v5, uint32_t v6, uint32_t v7, uint32_t v8) 
         : NAME(v1), NUM_SET(v2), NUM_WAY(v3), NUM_LINE(v4), WQ_SIZE(v5), RQ_SIZE(v6), PQ_SIZE(v7), MSHR_SIZE(v8) {
@@ -142,6 +147,7 @@ class CACHE : public MEMORY {
 
         lower_level = NULL;
         extra_interface = NULL;
+        prefetcher_level_dcache = NULL;
         fill_level = -1;
         MAX_READ = 1;
         MAX_FILL = 1;
@@ -155,6 +161,17 @@ class CACHE : public MEMORY {
 
     // destructor
     ~CACHE() {
+#ifdef COMPRESSED_CACHE
+        if(is_compressed)
+        {
+            for (uint32_t i=0; i<NUM_SET; i++)
+                delete[] compressed_cache_block[i];
+            delete[] compressed_cache_block;
+        }
+        cout << "Compressible 4: " << compressible4 << endl;
+        cout << "Compressible 2: " << compressible2 << endl;
+        cout << "Compressible 1: " << uncompressible << endl;
+#endif
         for (uint32_t i=0; i<NUM_SET; i++)
             delete[] block[i];
         delete[] block;
@@ -177,6 +194,7 @@ class CACHE : public MEMORY {
          check_mshr(PACKET *packet),
          prefetch_line(uint64_t ip, uint64_t base_addr, uint64_t pf_addr, int fill_level),
          kpc_prefetch_line(uint64_t base_addr, uint64_t pf_addr, int fill_level, int delta, int depth, int signature, int confidence);
+
 
     void handle_fill(),
          handle_writeback(),
@@ -211,8 +229,24 @@ class CACHE : public MEMORY {
              llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type),
              lru_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type);
 
+#ifdef COMPRESSED_CACHE
+    void configure_compressed_cache();
+    int  check_hit_cc(PACKET *packet),
+         invalidate_entry_cc(uint64_t inval_addr);
+    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t cf, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency);
 
-    bool is_fake_hit(uint64_t);
+    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t, uint32_t&);
+
+    uint32_t get_set_cc(uint64_t address);
+    uint32_t get_blkid_cc(uint64_t address);
+    uint64_t get_sb_tag(uint64_t address);
+    uint64_t getCF(char* data, bool count=false);
+    void fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packet);
+    uint8_t evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uint32_t& evicted_cf);
+#endif
+
+    bool is_fake_hit(uint64_t) { return false; }
+    void inform_tlb_eviction(uint64_t insert_page_addr, uint64_t evict_page_addr);
 };
 
 

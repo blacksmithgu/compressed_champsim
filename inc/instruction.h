@@ -9,9 +9,12 @@
 #define NUM_INSTR_DESTINATIONS_SPARC 4
 #define NUM_INSTR_DESTINATIONS 2
 #define NUM_INSTR_SOURCES 4
+#define CACHE_LINE_BYTES 64
 
 #include "set.h"
 
+#define DATA_TRACE
+#ifndef DATA_TRACE
 class input_instr {
   public:
 
@@ -44,6 +47,44 @@ class input_instr {
         }
     };
 };
+
+#else
+class input_instr {
+    public:
+
+        unsigned long long int ip;  // instruction pointer (program counter) value
+
+        unsigned char is_branch;    // is this branch
+        unsigned char branch_taken; // if so, is this taken
+
+        unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
+        unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+
+        unsigned long long int destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
+        unsigned long long int source_memory[NUM_INSTR_SOURCES];           // input memory
+
+        unsigned char destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES]; // output memory cache line values
+        unsigned char source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES]; // input memory cache line values
+
+        input_instr() {
+            ip = 0;
+            is_branch = 0;
+            branch_taken = 0;
+
+            for (uint32_t i=0; i<NUM_INSTR_SOURCES; i++) {
+                source_registers[i] = 0;
+                source_memory[i] = 0;
+            }
+
+            for (uint32_t i=0; i<NUM_INSTR_DESTINATIONS; i++) {
+                destination_registers[i] = 0;
+                destination_memory[i] = 0;
+            }
+        };
+
+};
+
+#endif
 
 class cloudsuite_instr {
   public:
@@ -121,6 +162,8 @@ class ooo_model_instr {
 
     uint8_t source_registers[NUM_INSTR_SOURCES]; // input registers 
 
+    unsigned char destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES]; // output memory cache line values
+    unsigned char source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES]; // input memory cache line values
     // these are instruction ids of other instructions in the window
     //int64_t registers_instrs_i_depend_on[NUM_INSTR_SOURCES];
     // these are indices of instructions in the window that depend on me
