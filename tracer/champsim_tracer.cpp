@@ -78,7 +78,7 @@ INT32 Usage()
 void BeginInstruction(VOID *ip, UINT32 op_code, VOID *opstring)
 {
     instrCount++;
-    //printf("[%p %u %s ", ip, opcode, (char*)opstring);
+    //printf("[%p %u %s ", ip, op_code, (char*)opstring);
 
     if(instrCount > KnobSkipInstructions.Value()) 
     {
@@ -140,7 +140,7 @@ void EndInstruction()
     }
 }
 
-void BranchOrNot(UINT32 taken)
+static VOID BranchOrNot(BOOL taken)
 {
     //printf("[%d] ", taken);
 
@@ -311,12 +311,13 @@ void MemoryWrite(VOID* addr, UINT32 index)
 // Is called for every instruction and instruments reads and writes
 VOID Instruction(INS ins, VOID *v)
 {
+//cerr << INS_Disassemble(ins) << " " << INS_IsBranchOrCall(ins) << " " << INS_IsXend(ins) << endl;
     // begin each instruction with this function
     UINT32 opcode = INS_Opcode(ins);
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BeginInstruction, IARG_INST_PTR, IARG_UINT32, opcode, IARG_END);
 
     // instrument branch instructions
-    if(INS_IsBranch(ins))
+    if (INS_IsBranch(ins) && !INS_IsXend(ins))
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BranchOrNot, IARG_BRANCH_TAKEN, IARG_END);
 
     // instrument register reads
