@@ -13,7 +13,7 @@
 
 #include "set.h"
 
-#define DATA_TRACE
+//#define DATA_TRACE
 #ifndef DATA_TRACE
 class input_instr {
   public:
