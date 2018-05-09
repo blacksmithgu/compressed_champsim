@@ -185,8 +185,9 @@ void O3_CPU::handle_branch()
                     arch_instr.destination_registers[i] = current_instr.destination_registers[i];
                     arch_instr.destination_memory[i] = current_instr.destination_memory[i];
                     arch_instr.destination_virtual_address[i] = current_instr.destination_memory[i];
+#ifdef DATA_TRACE
                     memcpy((arch_instr.destination_cache_line_value[i]), (current_instr.destination_cache_line_value[i]), CACHE_LINE_BYTES);
-
+#endif
                     if (arch_instr.destination_registers[i])
                         num_reg_ops++;
                     if (arch_instr.destination_memory[i]) {
@@ -212,7 +213,9 @@ void O3_CPU::handle_branch()
                 for (int i=0; i<NUM_INSTR_SOURCES; i++) {
                     arch_instr.source_registers[i] = current_instr.source_registers[i];
                     arch_instr.source_memory[i] = current_instr.source_memory[i];
+#ifdef DATA_TRACE
                     memcpy((arch_instr.source_cache_line_value[i]), (current_instr.source_cache_line_value[i]), CACHE_LINE_BYTES);
+#endif
                     arch_instr.source_virtual_address[i] = current_instr.source_memory[i];
 
                     if (arch_instr.source_registers[i])
