@@ -1212,8 +1212,9 @@ uint64_t CACHE::getCF(char* data, bool count)
     if(count) uncompressible++;
     return CF;
 */
-    //unsigned int rno= rand()%3;
-    //assert(rno < 3);
+    return 1;
+    unsigned int rno= rand()%3;
+    assert(rno < 3);
 
     if(rno % 3 == 2) {if(count) compressible4++; return 4;}
     if(rno % 3 == 1) {if(count) compressible2++; return 2;}
