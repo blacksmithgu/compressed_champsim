@@ -235,7 +235,7 @@ void print_deadlock(uint32_t i)
         cout << " fill_level: " << queue->entry[j].fill_level << " lq_index: " << queue->entry[j].lq_index << " sq_index: " << queue->entry[j].sq_index << endl; 
     }
 
-    assert(0);
+    exit(1);
 }
 
 void signal_handler(int signal) 
@@ -541,8 +541,7 @@ int main(int argc, char** argv)
                 abort();
         }
 
-        if (traces_encountered == 1)
-            break;
+        if (traces_encountered == 1) break;
     }
 
     // consequences of knobs
@@ -617,13 +616,13 @@ int main(int argc, char** argv)
             ooo_cpu[count_traces].trace_file = popen(ooo_cpu[count_traces].gunzip_command, "r");
             if (ooo_cpu[count_traces].trace_file == NULL) {
                 printf("\n*** Trace file not found: %s ***\n\n", argv[i]);
-                assert(0);
+                exit(1);
             }
 
             count_traces++;
             if (count_traces > NUM_CPUS) {
                 printf("\n*** Too many traces for the configured number of cores ***\n\n");
-                assert(0);
+                exit(1);
             }
         }
         else if(strcmp(argv[i],"-traces") == 0) {
@@ -633,7 +632,7 @@ int main(int argc, char** argv)
 
     if (count_traces != NUM_CPUS) {
         printf("\n*** Not enough traces for the configured number of cores ***\n\n");
-        assert(0);
+        exit(1);
     }
     // end trace file setup
 

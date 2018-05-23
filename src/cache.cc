@@ -18,24 +18,6 @@ void CACHE::configure_compressed_cache()
     compressible4 = 0;
     compressible2 = 0;
     uncompressible = 0;
-//    char test[CACHE_LINE_BYTES] = {'0', '0', '0', 'd', '1', '2', '3', '4', 'd', 'e', 'a', 'd', 'b', 'e', 'e', 'f', '1', 'b', '2', 'd', '3', 'e', '4', 'f' };
-/*    char test[CACHE_LINE_BYTES];
-    for(uint32_t i=0; i<CACHE_LINE_BYTES; i++)
-        test[i] = '\0';
-    uint64_t num  = 0x0000000000000004;
-    uint64_t num1 = 0x0000000000000003;
-    uint64_t num2 = 0x0000000000000002;
-    uint64_t num3 = 0x0000000000000001;
-
-    memcpy(test, (void*)(&num), sizeof(uint64_t));
-    memcpy(test+8, (void*)(&num1), sizeof(uint64_t));
-    memcpy(test+16, (void*)(&num2), sizeof(uint64_t));
-    memcpy(test+24, (void*)(&num3), sizeof(uint64_t));
-        
-    cout << "Compressed cache is configured. " << getCF(test) << endl;
-*/
-    //cout << "Compressed cache is configured. " << getCF(0xabcd1234deadbeef1b2d3e4f) << endl;
-//    assert(0);
 }
 #endif
 

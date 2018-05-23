@@ -38,7 +38,6 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
     // uncomment this line to see the LLC accesses
     // cout << "CPU: " << cpu << "  LLC " << setw(9) << TYPE_NAME << " set: " << setw(5) << set << " way: " << setw(2) << way;
-    // cout << hex << " paddr: " << setw(12) << paddr << " ip: " << setw(8) << ip << " victim_addr: " << victim_addr << dec << endl;
 
     // baseline LRU
     if (hit && (type == WRITEBACK)) // writeback hit does not update LRU state
@@ -46,6 +45,12 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
     return lru_update(set, way);
 }
+/*bool CACHE::is_fake_hit(uint64_t full_addr)
+{
+    uint64_t paddr = (full_addr >> 6) << 6;
+    return false;
+}*/
+
 
 void CACHE::llc_replacement_final_stats()
 {
