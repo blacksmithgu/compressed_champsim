@@ -39,8 +39,12 @@ void CACHE::handle_fill()
 
         // find victim
         uint32_t set = get_set(MSHR.entry[mshr_index].address), way;
+
+#ifdef COMPRESSED_CACHE
         uint32_t evicted_cf = 0;
         uint32_t compression_factor = getCF(MSHR.entry[mshr_index].program_data);
+#endif
+
         if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
             if(is_compressed)
@@ -242,11 +246,12 @@ void CACHE::handle_writeback()
 
         // access cache
         uint32_t set = get_set(WQ.entry[index].address);
-        uint32_t compression_factor = getCF(WQ.entry[index].program_data);
         int way = check_hit(&WQ.entry[index]);
-        uint32_t myCF = 0;
         bool force_victim = false;
 #ifdef COMPRESSED_CACHE
+        uint32_t compression_factor = getCF(WQ.entry[index].program_data);
+        uint32_t myCF = 0;
+
         if(is_compressed)
         {
             set = get_set_cc(WQ.entry[index].address);
