@@ -40,12 +40,13 @@ void CACHE::handle_fill()
         // find victim
         uint32_t set = get_set(MSHR.entry[mshr_index].address), way;
         uint32_t evicted_cf = 0;
+        uint32_t compression_factor = getCF(MSHR.entry[mshr_index].program_data);
         if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
             if(is_compressed)
             {
                 set = get_set_cc(MSHR.entry[mshr_index].address);
-                way = llc_find_victim_cc(fill_cpu, MSHR.entry[mshr_index].instr_id, set, compressed_cache_block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type, getCF(MSHR.entry[mshr_index].program_data), evicted_cf);
+                way = llc_find_victim_cc(fill_cpu, MSHR.entry[mshr_index].instr_id, set, compressed_cache_block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type, compression_factor, evicted_cf);
             }
             else
 #endif
@@ -61,7 +62,7 @@ void CACHE::handle_fill()
             if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
                 if(is_compressed)
-                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
+                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, compression_factor, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
                 else
 #endif
                     llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
@@ -157,7 +158,7 @@ void CACHE::handle_fill()
             if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
                 if(is_compressed)
-                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
+                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], MSHR.entry[mshr_index].type, compression_factor, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
                 else
 #endif
                 llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, block[set][way].full_addr, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
@@ -168,7 +169,6 @@ void CACHE::handle_fill()
 
 
             if((cache_type == IS_STLB) && (prefetcher_level_dcache != NULL)) {
-                //cout << "STLB eviction " << hex << MSHR.entry[mshr_index].full_addr << " " << MSHR.entry[mshr_index].address << " " << block[set][way].full_addr << " " << block[set][way].address << dec << endl;
                 prefetcher_level_dcache->inform_tlb_eviction(MSHR.entry[mshr_index].data, block[set][way].data);
             }
 
@@ -242,6 +242,7 @@ void CACHE::handle_writeback()
 
         // access cache
         uint32_t set = get_set(WQ.entry[index].address);
+        uint32_t compression_factor = getCF(WQ.entry[index].program_data);
         int way = check_hit(&WQ.entry[index]);
         uint32_t myCF = 0;
         bool force_victim = false;
@@ -253,7 +254,7 @@ void CACHE::handle_writeback()
             //assert(check_hit(&WQ.entry[index]) == check_hit_cc(&WQ.entry[index]));
             //Hit
             if(way >= 0) {
-                if(compressed_cache_block[set][way].compressionFactor != getCF(WQ.entry[index].program_data))
+                if(compressed_cache_block[set][way].compressionFactor != compression_factor)
                 {
                     //What if this line is dirty? We are writing the same line, so even it was dirty, the value is being overwritten.
                     invalidate_entry_cc(WQ.entry[index].address); 
@@ -276,12 +277,12 @@ void CACHE::handle_writeback()
                             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
                                 found = true;
                                 myCF = cf;
-                                if(compressed_cache_block[set][way].compressionFactor != getCF(WQ.entry[index].program_data))
+                                if(compressed_cache_block[set][way].compressionFactor != compression_factor)
                                 {
                                     //It's a writeback hit but it can force an eviction, so we made this a WB miss.
                                     assert(0);
                                 }
-                                llc_update_replacement_state_cc(writeback_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], WQ.entry[index].ip, 0, WQ.entry[index].type, 1, 0, 0);
+                                llc_update_replacement_state_cc(writeback_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], WQ.entry[index].ip, 0, WQ.entry[index].type, compression_factor, 1, 0, 0);
 
                             }
                         }
@@ -409,7 +410,7 @@ void CACHE::handle_writeback()
                     if(is_compressed)
                     {
                         set = get_set_cc(WQ.entry[index].address);
-                        way = llc_find_victim_cc(writeback_cpu, WQ.entry[index].instr_id, set, compressed_cache_block[set], WQ.entry[index].ip, WQ.entry[index].full_addr, WQ.entry[index].type, getCF(WQ.entry[index].program_data), evicted_cf);
+                        way = llc_find_victim_cc(writeback_cpu, WQ.entry[index].instr_id, set, compressed_cache_block[set], WQ.entry[index].ip, WQ.entry[index].full_addr, WQ.entry[index].type, compression_factor, evicted_cf);
                     }
                     else
 #endif
@@ -488,7 +489,7 @@ void CACHE::handle_writeback()
                     if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
                     if(is_compressed)
-                        llc_update_replacement_state_cc(writeback_cpu, set, way, evicted_cf, WQ.entry[index].full_addr, WQ.entry[index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], WQ.entry[index].type, 0, 0, 0);
+                        llc_update_replacement_state_cc(writeback_cpu, set, way, evicted_cf, WQ.entry[index].full_addr, WQ.entry[index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], WQ.entry[index].type, compression_factor, 0, 0, 0);
                     else
 #endif
 
@@ -604,7 +605,7 @@ void CACHE::handle_read()
                             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
                                 found = true;
                                 //Compression factor should not change because this is a read
-                                llc_update_replacement_state_cc(read_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], RQ.entry[index].ip, 0, RQ.entry[index].type, 1, 0, 0);
+                                llc_update_replacement_state_cc(read_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], RQ.entry[index].ip, 0, RQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, 1, 0, 0);
                                 
                             }
                         }
@@ -830,7 +831,7 @@ void CACHE::handle_prefetch()
                         for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
                             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
                                 found = true;
-                                llc_update_replacement_state_cc(prefetch_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], PQ.entry[index].ip, 0, PQ.entry[index].type, 1, 0, 0);
+                                llc_update_replacement_state_cc(prefetch_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], PQ.entry[index].ip, 0, PQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, 1, 0, 0);
                                 
                             }
                         }
@@ -978,7 +979,6 @@ uint32_t CACHE::get_set(uint64_t address)
 
 #ifdef COMPRESSED_CACHE
 
-#define MAX_COMPRESSIBILITY 4
 //Note addresses passed to these methods already drop off the last 6 bits.
 uint32_t CACHE::get_set_cc(uint64_t address)
 {
@@ -1006,25 +1006,16 @@ static unsigned long long my_llabs ( long long x )
 long long unsigned * convertBuffer2Array (char * buffer, unsigned size, unsigned step)
 {
       long long unsigned * values = (long long unsigned *) malloc(sizeof(long long unsigned) * size/step);
-      //std::cout << std::dec << "ConvertBuffer = " << size/step << " " << sizeof(char) << " " << sizeof(uint64_t) << std::endl;
      //init
      unsigned int i,j; 
      for (i = 0; i < size / step; i++) {
           values[i] = 0;    // Initialize all elements to zero.
       }
-     // printf("Element Size = %d \n", step);
       for (i = 0; i < size; i += step ){
           for (j = 0; j < step; j++){
-              //printf("Buffer = %02x \n", (unsigned char) buffer[i + j]);
               values[i / step] += (long long unsigned)((unsigned char)buffer[i + j]) << (8*j);
-              //printf("step %d value = ", j);
-              //printLLwithSize(values[i / step], step);  
           }
-        //  std::cout << "Current value = " << values[i / step] << std::endl;
-          //printLLwithSize(values[i / step], step);
-         // printf("\n");
       }
-      //std::cout << "End ConvertBuffer = " << size/step << std::endl;
       return values;
 }
 
@@ -1062,7 +1053,6 @@ int isSameValuePackable ( long long unsigned * values, unsigned size){
 unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsigned blimit, unsigned bsize){
     unsigned long long limit = 0;
     unsigned BASES = 3;
-    //cout << "MBC " << size << " " << blimit << " " << bsize << endl;
     //define the appropriate size for the mask
     switch(blimit){
         case 1:
@@ -1075,7 +1065,7 @@ unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsig
             limit = 0xFFFFFFFF;
             break;
         default:
-            //std::cout << "Wrong blimit value = " <<  blimit << std::endl;
+            std::cerr << "Wrong blimit value = " <<  blimit << std::endl;
             exit(1);
     }
     // finding bases: # BASES
@@ -1086,7 +1076,6 @@ unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsig
     mbases[0] = 0;
     unsigned int i,j;
     for (i = 0; i < size; i++) {
-    //    cout << "    * " << i << hex << " " << values[i] << " " << baseCount  << endl;
         for(j = 0; j <  baseCount; j++){
             if( my_llabs((long long int)(mbases[j] -  values[i])) > limit ){
                 //mbases.push_back(values[i]); // add new base
@@ -1100,7 +1089,6 @@ unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsig
                 }
                 if(new_base)
                     mbases[baseCount++] = values[i];  
-       //         cout << baseCount << " " << hex << mbases[baseCount-1] << dec << endl;
             }
         }
         if(baseCount >= BASES) //we don't have more bases
@@ -1111,37 +1099,23 @@ unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsig
     for (i = 0; i < size; i++) {
         //ol covered = 0;
         for(j = 0; j <  baseCount; j++){
-        //    cout << "******* " << hex << mbases[j]  << " " << values[i] << " " << my_llabs((long long int)(mbases[j] -  values[i])) << " " << limit << dec << endl;
             if( my_llabs((long long int)(mbases[j] -  values[i])) <= limit ){
                 compCount++;
                 break;
             }
         }
-        cout << compCount << endl;
     }
 
-    //for(j = 0; j <  baseCount; j++)
-      //  cout << "******* " << hex << mbases[j]  << dec << endl;
-    //return compressed size
     unsigned mCompSize = blimit * compCount + bsize * (BASES-1) + (size - compCount) * bsize;
-    //unsigned mCompSize = blimit * compCount + bsize + (size - compCount) * bsize;
-    //cout << "MBC ans: " << compCount << " " << mCompSize << endl;
     if(compCount < size)
         return size * bsize;
-    //VG_(printf)("%d-bases bsize = %d osize = %d CompCount = %d CompSize = %d\n", BASES, bsize, blimit, compCount, mCompSize);
+
     return mCompSize;
 }
 
 unsigned BDICompress (char * buffer, unsigned _blockSize)
 {
-    //char * dst = new char [_blockSize];
-    //  print_value(buffer, _blockSize);
-
     long long unsigned * values = convertBuffer2Array( buffer, _blockSize, 8);
-
-    for(uint32_t j = 0; j <  _blockSize/8; j++)
-        cout << hex << values[j]  << dec << endl;
-
     unsigned bestCSize = _blockSize;
     unsigned currCSize = _blockSize;
     if( isZeroPackable( values, _blockSize / 8))
@@ -1175,32 +1149,16 @@ unsigned BDICompress (char * buffer, unsigned _blockSize)
     //delete [] buffer;
     buffer = NULL;
     values = NULL;
-//    printf(" BestCSize = %d \n", bestCSize);
     return bestCSize;
 }
 
 uint64_t CACHE::getCF(char* data, bool count)
 {
-/*
-    cout << "New: ";
-    for(uint32_t i=0; i<CACHE_LINE_BYTES; i++)
-        cout << hex << (unsigned int)(data[i]&0xFF) << " ";
-    cout << endl;
-    unsigned int _blockSize = 64;
-    unsigned int CF = _blockSize/BDICompress(data, _blockSize);
-    cout << dec << "        " << CF << endl;
-    if(CF >= 4) {if(count) compressible4++; return 4;}
-    if(CF >= 2) {if(count) compressible2++; return 2;}
+    unsigned int CF = 64 / BDICompress(data, 64);
+    if(CF >= 4) { if(count) compressible4++; return 4; }
+    if(CF >= 2) { if(count) compressible2++; return 2; }
     if(count) uncompressible++;
     return CF;
-*/
-    unsigned int rno= rand()%3;
-    assert(rno < 3);
-
-    if(rno % 3 == 2) {if(count) compressible4++; return 4;}
-    if(rno % 3 == 1) {if(count) compressible2++; return 2;}
-    if(count) uncompressible++;
-    return 1;
 }
 
 #endif
@@ -1361,8 +1319,6 @@ void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packe
     memcpy(compressed_cache_block[set][way].program_data[cf], packet->program_data, CACHE_LINE_BYTES);
     compressed_cache_block[set][way].cpu[cf] = packet->cpu;
     compressed_cache_block[set][way].instr_id[cf] = packet->instr_id;
-
-    //cout << hex << packet->full_addr << " " << packet->address << " " << ((packet->full_addr >> 6) << 6) << " " << get_set_cc(packet->address) << " " << get_sb_tag(packet->address) << endl;
 
     DP ( if (warmup_complete[packet->cpu]) {
     cout << "[" << NAME << "] " << __func__ << " set: " << set << " way: " << way;

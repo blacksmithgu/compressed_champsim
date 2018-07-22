@@ -1,0 +1,63 @@
+#include "cache.h"
+
+uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
+        uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
+    // 1st Variant: Look for empty/invalid space in a superblock line.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Ignore lines w/ a different superblock.
+        if(current_set[way].sbTag != get_sb_tag(line_addr)) continue;
+
+        // Ignore lines of a different compression factor.
+        if(current_set[way].compressionFactor != incoming_cf) continue;
+
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            // Ignore valid lines.
+            if(current_set[way].valid[compression_index]) continue;
+
+            // We've found an invalid line, return it.
+            evicted_compressed_index = compression_index;
+            return way;
+        }
+    }
+
+    // 2nd Variant: Look for a plain invalid way.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Valid ways have CF > 0.
+        if(current_set[way].compressionFactor != 0) continue;
+
+        // Otherwise, we found a line.
+        evicted_compressed_index = 0;
+        return way;
+    }
+
+    //Step 3: Evict a superblock using LRU.
+    uint32_t max_lru = 0;
+    uint32_t victim = 0;
+    for (uint32_t way = 0; way < NUM_WAY; way++) {
+        if (current_set[way].lru > max_lru) {
+            max_lru = current_set[way].lru;
+            victim = way;
+        }
+    }
+
+    evicted_cf_index = 4;
+    return victim;
+}
+
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr, uint64_t ip,
+        uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    // Writeback hit does not update LRU state
+    if (type == WRITEBACK && hit) return;
+
+    // Age all other lines.
+    for (uint32_t i=0; i<NUM_WAY; i++) {
+        // Skip invalid lines.
+        if(compressed_cache_block[set][i].compressionFactor == 0) continue;
+
+        // Age all lines younger than the accessed line.
+        if (compressed_cache_block[set][i].lru < compressed_cache_block[set][way].lru)
+            compressed_cache_block[set][i].lru++;
+    }
+
+    compressed_cache_block[set][way].lru = 0; // promote to the MRU position
+}

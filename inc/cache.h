@@ -78,6 +78,9 @@ extern uint32_t PAGE_TABLE_LATENCY, SWAP_LATENCY;
 #define LLC_MSHR_SIZE 32
 #define LLC_LATENCY 20  // 4 (L1I or L1D) + 8 + 20 = 32 cycles
 
+// COMPRESSION
+#define MAX_COMPRESSIBILITY 4
+
 class CACHE : public MEMORY {
   public:
     uint32_t cpu;
@@ -233,9 +236,9 @@ class CACHE : public MEMORY {
     void configure_compressed_cache();
     int  check_hit_cc(PACKET *packet),
          invalidate_entry_cc(uint64_t inval_addr);
-    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t cf, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency);
+    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compression_index, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency);
 
-    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t, uint32_t&);
+    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index);
 
     uint32_t get_set_cc(uint64_t address);
     uint32_t get_blkid_cc(uint64_t address);

@@ -1,0 +1,325 @@
+/**
+ * A "compression aware" version of Hawkeye which uses a size-aware OPTgen vector to naively
+ * support compressed cache lines.
+ */
+
+#include "cache.h"
+#include "champsim.h"
+#include "instruction.h"
+#include "size_aware_optgen.h"
+#include "counter.h"
+
+#include <cstring>
+
+#define COUNTER_MAX_VALUE 15
+#define RRPV_MAX_VALUE 15
+
+using namespace std;
+
+/**
+ * A structure containing all of the relevant information about a cache access.
+ */
+struct CacheAccess {
+    // The cpu the access originated from.
+    uint32_t cpu;
+
+    // The specific set which this access went to.
+    uint32_t set;
+
+    // The specific memory address which was accessed.
+    uint32_t full_address;
+
+    // The address of the start of the cache line the memory address is a part of.
+    uint32_t line_address;
+
+    // The Optgen-specific time quanta that this access occurred at, measured in accesses to that Optgen structure.
+    uint32_t optgen_time;
+
+    // The PC which generated this access.
+    uint32_t pc;
+
+    // The compression factor of the cache line upon insertion.
+    uint32_t compression_factor;
+
+    // The prediction made for this cache access (false for miss, true for hit).
+    bool prediction;
+
+    CacheAccess(uint32_t cpu, uint32_t set, uint32_t full_address, uint32_t line_address,
+            uint32_t optgen_time, uint32_t pc, uint32_t cf, bool prediction)
+        : cpu(cpu), set(set), full_address(full_address), line_address(line_address),
+        optgen_time(optgen_time), pc(pc), compression_factor(cf), prediction(prediction) {}
+
+    CacheAccess() {}
+};
+
+// A map of address -> full cache accesses which we use in order to compute the optimal solution.
+map<uint64_t, CacheAccess> outstanding_accesses;
+
+// A map of PC -> saturating counter which tracks how cache friendly/averse each PC is.
+map<uint64_t, Counter<COUNTER_MAX_VALUE>> counters;
+
+// A pair of maps tracking overall training/detraining.
+map<uint64_t, uint32_t> pc_training_counts;
+map<uint64_t, uint32_t> pc_detraining_counts;
+
+// A per-set collection of OPTgen data structures, used to compute the optimal labels of specific
+// cache accesses.
+OPTgen optgens[LLC_SET];
+
+// A local "timer" counting the number of accesses to each set/optgen.
+uint32_t num_accesses[LLC_SET] = {0};
+
+// The full required state for keeping track of RRPV; this is computed on a per-block level, and then the overall
+// RRPV for an entire superblock is computed as the best RRPV of the sub-blocks.
+uint32_t rrpv[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY] = {0};
+
+// Contains metadata about all of the cache lines in the cache, indexed by set, way, and compressed index.
+CacheAccess accesses[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY];
+
+/**
+ * Ages the RRPV of all lines by 1 in a set, saturating at RRPV_MAX_VALUE.
+ */
+void rrpv_age_lines(uint32_t set_index, COMPRESSED_CACHE_BLOCK* set) {
+    // First, see if the cache-friendly lines have already reached the saturation point.
+    // If they have, there's nothing for us to do.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        for(uint32_t compression_index = 0; compression_index < set[way].compressionFactor; compression_index++) {
+            if(!set[way].valid[compression_index]) continue;
+
+            // Quit out if there is already a max-RRPV entry.
+            if(accesses[set_index][way][compression_index].prediction
+                    && rrpv[set_index][way][compression_index]== RRPV_MAX_VALUE - 1) return;
+        }
+    }
+
+    // Otherwise, increment every cache-friendly line by 1.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        for(uint32_t compression_index = 0; compression_index < set[way].compressionFactor; compression_index++) {
+            if(!set[way].valid[compression_index]) continue;
+
+            if(accesses[set_index][way][compression_index].prediction) rrpv[set_index][way][compression_index]++;
+        }
+    }
+}
+
+/**
+ * Detrain a PC by reducing it's counter.
+ */
+void pc_detrain(uint64_t pc) {
+    if(counters.find(pc) == counters.end())
+        counters[pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+    counters[pc].decrement();
+    pc_detraining_counts[pc]++;
+}
+
+/**
+ * Train a PC by increasing it's counter.
+ */
+void pc_train(uint64_t pc) {
+    if(counters.find(pc) == counters.end())
+        counters[pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+    counters[pc].increment();
+    pc_training_counts[pc]++;
+}
+
+/**
+ * Returns the current bias (positive / (positive + negative)) of a PC.
+ */
+double pc_bias(uint64_t pc) {
+    uint64_t training_count = pc_training_counts[pc];
+    uint64_t detraining_count = pc_detraining_counts[pc];
+    uint64_t total_count = training_count + detraining_count;
+
+    // A relatively optimistic outlook for PCs we have never trained!
+    if(total_count == 0)
+        return 1;
+
+    return (double) training_count / (double) total_count;
+}
+
+/**
+ * Called to initialize the LLC replacement policy state.
+ */
+void CACHE::llc_initialize_replacement() {
+    // Initialize our optgen structures.
+    for(int x = 0; x < LLC_SET; x++) optgens[x] = OPTgen(LLC_WAY);
+}
+
+/**
+ * Called when we need to find a victim to evict in a given set.
+ * Notes: incoming_cf is the compression factor of the incoming cache line (1, 2, or 4 for now).
+ * evicted_compressed_index is the index of the line within a compressed cache line to evict.
+ *
+ * This assumes the YACC underlying cache architecture, which is a thankfully simple architecture. It only supports
+ * homogenous cache lines (so same compressibility for all blocks in a way), and furthermore all blocks in a way must be
+ * part of the same *superblock*; much like every 64 bytes makes a cache line in memory, every MAX_COMPRESSIBILITY cache
+ * lines/"blocks" makes a superblock. Thus, this effectively means you can only store spatially contiguous, compressible
+ * data in the same way in a YACC-based cache.
+ *
+ * With all these constraints in mind, we formulate a relatively "simple" cache replacement policy as follows, given a
+ * new incoming line:
+ * - Look for any ways which have the same superblock as the incoming line, and an empty space. Use that empty space.
+ * - Look for a completely invalid way (no entries) and use that.
+ * - Choose a superblock cacheline to evict, and evict all entries.
+ *
+ * The simplified cache heirarchy makes decisions easier, but 
+ * - If CF = 1, then there's no compression anyway, so just choose a superblock cacheline to evict.
+ * - IF CF = 2, it's tricky - we can potentially evict a line in a CF = 2 line with the same superblock, OR evict a
+ *   different superblock to make space. We'll solve this by picking a superblock to evict as normal, and if the
+ *   superblock happens to be the same superblock, then we only evict a single slot in it.
+ * - If CF = 4, then all the lines of the superblock fit inside one line anyway.
+ *
+ * TODO: What if a good block gets stuck with a bad block in a 2x compressible line? The good block will currently
+ * "protect" the bad block from eviction.
+ */
+uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
+        uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
+
+    uint64_t line_addr = full_addr & ~(BLOCK_SIZE - 1);
+
+    // 1st Variant: Look for empty/invalid space in a superblock line.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Ignore lines w/ a different superblock.
+        if(current_set[way].sbTag != get_sb_tag(line_addr)) continue;
+
+        // Ignore lines of a different compression factor.
+        if(current_set[way].compressionFactor != incoming_cf) continue;
+
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            // Ignore valid lines.
+            if(current_set[way].valid[compression_index]) continue;
+
+            // We've found an invalid line, return it.
+            evicted_compressed_index = compression_index;
+            return way;
+        }
+    }
+
+    // 2nd Variant: Look for a plain invalid way.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Valid ways have CF > 0.
+        if(current_set[way].compressionFactor != 0) continue;
+
+        // Otherwise, we found a line.
+        evicted_compressed_index = 0;
+        return way;
+    }
+
+    // Tricky detraining #1: Check each cache line, and if we wouldn't cache it now, detrain it.
+    // For size aware, we need to make sure to pass the size of the cache line as well, which is just
+    // max size divided by compression amount.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            if(!current_set[way].valid[compression_index]) continue;
+
+            if(!optgens[set].should_cache(accesses[set][way][compression_index].optgen_time, num_accesses[set]))
+                pc_detrain(accesses[set][way][compression_index].pc);
+        }
+    }
+
+    // 3rd Variant: The tricky one, where we choose an entire superblock to evict.
+    // This is where the actual replacement policy comes into play; we will use RRPV at the cache way level,
+    // evicting the superblock with the highest RRPV.
+    uint32_t max_rrpv = 0;
+    uint32_t victim = 0;
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // We define the RRPV of the superblock to be the best RRPV of the blocks in the superblock.
+        uint32_t superblock_rrpv = RRPV_MAX_VALUE;
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            if(!current_set[way].valid[compression_index]) continue;
+
+            superblock_rrpv = std::min(superblock_rrpv, rrpv[set][way][compression_index]);
+        }
+
+        if(superblock_rrpv > max_rrpv) {
+            max_rrpv = superblock_rrpv;
+            victim = way;
+        }
+    }
+
+    // We're evicting full lines beyond this point, so set compressed index to >= MAX_COMPRESSIBILITY.
+    evicted_compressed_index = MAX_COMPRESSIBILITY;
+
+    // If we find a cache-averse line, we can throw it out immediately!
+    if(max_rrpv == RRPV_MAX_VALUE) {
+        return victim;
+    }
+
+    // Otherwise, detrain the cache-friendly line as it betrayed expectations and then throw it out.
+    for(uint32_t compression_index = 0; compression_index < current_set[victim].compressionFactor; compression_index++)
+        pc_detrain(accesses[set][victim][compression_index].pc);
+
+    return victim;
+}
+
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
+    uint64_t full_addr, uint32_t type) {
+    std::cerr << "Normal find victim also called..." << std::endl;
+
+    // An assert() is legitimate here instead of an exit(), because this should never happen.
+    assert(0);
+    return 0;
+}
+
+// Called on every cache hit and cache fill to update the replacement state.
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr,
+        uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    // Writeback hit usually does not update the replacement state, so ignore it.
+    if (hit && (type == WRITEBACK))
+        return;
+
+    // Compute the address of the corresponding cache line, using that to create the cache access and do all the
+    // memory-related operations.
+    uint64_t line_addr = full_addr & ~(BLOCK_SIZE - 1);
+
+    // If we've seen an access to this cache line before, then update Optgen and output this cache access.
+    auto access_iter = outstanding_accesses.find(line_addr);
+    if(access_iter != outstanding_accesses.end()) {
+        CacheAccess& access = access_iter->second;
+
+        // Record the access in Optgen to get the hit/miss decision.
+        bool decision = optgens[set].try_cache(access.optgen_time, num_accesses[set]);
+
+        // Train this PC up or down in our counters based on the decision.
+        if(decision) pc_train(access.pc);
+        else pc_detrain(access.pc);
+    }
+
+    // Make a prediction based on the current counter values!
+    uint32_t counter_value = (counters.find(ip) != counters.end()) ? counters[ip].value() : (COUNTER_MAX_VALUE / 2);
+    bool prediction = (counter_value >= COUNTER_MAX_VALUE / 2);
+
+    CacheAccess access = CacheAccess(cpu, set, full_addr, line_addr, num_accesses[set], ip, cf, prediction);
+
+    // Update the state of the newly inserted line, including setting up the RRPV and aging other lines in the cache.
+    accesses[set][way][compressed_index] = access;
+
+    // TODO: We need to do something smarter than just setting RRPV to whatever the latest prediction is! We should take
+    // the best of the blocks in a given way.
+    if(prediction) {
+        rrpv[set][way][cf] = 0;
+        if(!hit) rrpv_age_lines(set, this->compressed_cache_block[set]);
+        rrpv[set][way][cf] = 0;
+    } else {
+        rrpv[set][way][cf] = RRPV_MAX_VALUE;
+    }
+
+    // Finally, update the access in the access map so we can observe future reuses.
+    outstanding_accesses[line_addr] = access;
+    num_accesses[set]++;
+}
+
+// called on every cache hit and cache fill
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip,
+    uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    std::cout << "Normal Update replacement state called..." << std::endl;
+
+    // Assert is valid here as this should never happen.
+    assert(0);
+}
+
+void CACHE::llc_replacement_final_stats() {
+
+}

@@ -49,6 +49,11 @@ struct OPTgen {
         num_attempted_cached(0), cache_size(cache_size), liveness_start_quanta(0) { }
 
     /**
+     * Default optgen constructor; uses a default of 16 cache lines.
+     */
+    OPTgen() : OPTgen(16) {}
+
+    /**
      * Attempts to cache a cache line which had a usage interval
      * between [last_quanta, curr_quanta].
      *
