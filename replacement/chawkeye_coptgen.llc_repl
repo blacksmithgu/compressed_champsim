@@ -76,6 +76,9 @@ uint32_t rrpv[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY] = {0};
 // Contains metadata about all of the cache lines in the cache, indexed by set, way, and compressed index.
 CacheAccess accesses[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY];
 
+// # of accesses since we last checked the goodness of the cache.
+uint32_t accesses_since_last_goodness_check = 0;
+
 /**
  * Ages the RRPV of all lines by 1 in a set, saturating at RRPV_MAX_VALUE.
  */
@@ -137,6 +140,33 @@ double pc_bias(uint64_t pc) {
         return 1;
 
     return (double) training_count / (double) total_count;
+}
+
+/**
+ * Utility method which performs a few sanity checks to make sure bugs aren't hiding in the
+ * ChampSim data structures.
+ */
+void assert_cache_in_good_state(CACHE* cache) {
+    for(int set = 0; set < LLC_SET; set++) {
+        for(int way = 0; way < LLC_WAY; way++) {
+            COMPRESSED_CACHE_BLOCK& block = cache->compressed_cache_block[set][way];
+
+            // Assertion 1: way is valid <-> compressionFactor != 0
+            // A way is valid if any of it's blocks are valid.
+            bool is_way_valid = false;
+            for(int cf = 0; cf < MAX_COMPRESSIBILITY; cf++)
+                is_way_valid |= block.valid[cf];
+
+            // If block is valid, cf != 0; if block is invalid, cf == 0.
+            assert(is_way_valid == (block.compressionFactor != 0));
+
+            // Assertion 2: the sb tag matches the addresses in the way.
+            for(int cf = 0; cf < MAX_COMPRESSIBILITY; cf++) {
+                if(!block.valid[cf]) continue;
+                assert(cache->get_sb_tag(block.address[cf]) == block.sbTag);
+            }
+        }
+    }
 }
 
 /**
@@ -270,6 +300,13 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     // Writeback hit usually does not update the replacement state, so ignore it.
     if (hit && (type == WRITEBACK))
         return;
+
+    // We don't really trust ChampSim, so do some sanity checks every few thousand update calls.
+    accesses_since_last_goodness_check++;
+    if(accesses_since_last_goodness_check >= 1000) {
+        assert_cache_in_good_state(this);
+        accesses_since_last_goodness_check = 0;
+    }
 
     // Compute the address of the corresponding cache line, using that to create the cache access and do all the
     // memory-related operations.
