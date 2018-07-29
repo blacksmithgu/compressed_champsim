@@ -1,4 +1,16 @@
 #include "cache.h"
+#include <stdint.h>
+
+// Counts the total number of cache lines stored in the cache; this can be greater than the number of ways,
+// since we're using a compressed cache.
+uint64_t total_cache_lines_stored = 0;
+
+// A "sum of sums" - is the sum of the total cache lines stored each insertion/deletion; dividing this by the total
+// number of accesses gives the average utilization of the cache over the course of the program.
+uint64_t total_cache_lines_stored_over_time = 0;
+
+// The total number of accesses to the cache as a whole.
+uint64_t num_accesses = 0;
 
 /**
  * Called to initialize the LLC replacement policy state.
@@ -23,12 +35,18 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 }
 
 void CACHE::llc_replacement_final_stats() {
-
+    // Compute average utilization as a percentage between 0 - 400%.
+    double utilization = double(total_cache_lines_stored_over_time) / double(num_accesses * LLC_SET * LLC_WAY);
+    
+    std::cout << std::endl << std::endl;
+    std::cout << "Total Accesses: " << num_accesses << std::endl;
+    std::cout << "Average Utilization (0% - 400%): " << std::setprecision(5) << (utilization * 100.0) << "%" << std::endl;
 }
 
 uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
         uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
     // 1st Variant: Look for empty/invalid space in a superblock line.
+    // If this succeeds, # of total cache lines stored does not change.
     for(uint32_t way = 0; way < LLC_WAY; way++) {
         // Ignore lines w/ a different superblock.
         if(current_set[way].sbTag != get_sb_tag(full_addr)) continue;
@@ -47,12 +65,14 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
     }
 
     // 2nd Variant: Look for a plain invalid way.
+    // Number of total cache lines increases by one.
     for(uint32_t way = 0; way < LLC_WAY; way++) {
         // Valid ways have CF > 0.
         if(current_set[way].compressionFactor != 0) continue;
 
         // Otherwise, we found a line.
-        evicted_compressed_index = 0;
+        evicted_compressed_index = 4;
+        total_cache_lines_stored++;
         return way;
     }
 
@@ -66,6 +86,13 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         }
     }
 
+    // Count the number of valid lines in the evicted way, and remove those from total lines stored, and add in the new
+    // line.
+    total_cache_lines_stored++;
+    for(uint32_t compression_index = 0; compression_index < current_set[victim].compressionFactor; compression_index++) {
+        if(current_set[victim].valid[compression_index]) total_cache_lines_stored--;
+    }
+
     evicted_compressed_index = 4;
     return victim;
 }
@@ -74,6 +101,10 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
         uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
     // Writeback hit does not update LRU state
     if (type == WRITEBACK && hit) return;
+
+    // Sum the total size of the cahce & increment number of accesses.
+    num_accesses++;
+    total_cache_lines_stored_over_time += total_cache_lines_stored;
 
     // Age all other lines.
     for (uint32_t i=0; i<NUM_WAY; i++) {
