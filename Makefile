@@ -13,6 +13,9 @@ LDFlags = -lboost_serialization
 libs =
 libDir =
 
+# External, command line supplied options to the c compiler in addition to the normal CFlags.
+ExternalCFlags?=
+
 
 #************************ DO NOT EDIT BELOW THIS LINE! ************************
 
@@ -49,7 +52,7 @@ $(objDir)/%.o: %.$(srcExt)
 	@echo "Generating dependencies for $<..."
 	@$(call make-depend,$<,$@,$(subst .o,.d,$@))
 	@echo "Compiling $<..."
-	@$(CC) $(CFlags) $< -o $@
+	@$(CC) $(CFlags) $(ExternalCFlags) $< -o $@
 
 clean:
 	$(RM) -r $(objDir)
@@ -75,5 +78,6 @@ define make-depend
         -MP       \
         -MT $2    \
         $(CFlags) \
+		$(ExternalCFlags) \
         $1
 endef

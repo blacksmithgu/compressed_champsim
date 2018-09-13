@@ -2,3 +2,6 @@ bin
 obj
 logs
 *.bak
+
+# OH WHY
+replacement/base_replacement.cc

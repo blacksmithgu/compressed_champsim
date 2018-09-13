@@ -33,7 +33,9 @@
 #endif
 
 // CPU
-#define NUM_CPUS 1
+#ifndef NUM_CPUS
+    #define NUM_CPUS 1
+#endif
 #define CPU_FREQ 4000
 #define DRAM_IO_FREQ 800
 #define PAGE_SIZE 4096
@@ -55,8 +57,13 @@
 #define FILL_DRAM 16
 
 // DRAM
-#define DRAM_CHANNELS 1      // default: assuming one DIMM per one channel 4GB * 1 => 4GB off-chip memory
-#define LOG2_DRAM_CHANNELS 1
+// default: assuming one DIMM per one channel 4GB * 1 => 4GB off-chip memory
+#ifndef DRAM_CHANNELS
+    #define DRAM_CHANNELS 1
+#endif
+#ifndef LOG2_DRAM_CHANNELS
+    #define LOG2_DRAM_CHANNELS 1
+#endif
 #define DRAM_RANKS 8         // 512MB * 8 ranks => 4GB per DIMM
 #define LOG2_DRAM_RANKS 3
 #define DRAM_BANKS 8         // 64MB * 8 banks => 512MB per rank
