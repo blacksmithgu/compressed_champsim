@@ -1,6 +1,6 @@
 #!/bin/sh
 
-OPTIONS=$(getopt -o b:p:r:p:c:n: --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name: -- "$@")
+OPTIONS=$(getopt -o b:p:r:p:c:n: --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 
@@ -14,6 +14,8 @@ LLC_REPLACEMENT=lru  # replacement/*.llc_repl
 NUM_CORE=1
 COMPILE_OPTIONS=
 BINARY_NAME=
+COMPRESSION="compressed"
+TRACE_TYPE="new"
 
 while true; do
     case "$1" in
@@ -23,6 +25,10 @@ while true; do
         --policy) LLC_REPLACEMENT=$2; shift 2;;
         --cores) NUM_CORE=$2; shift 2;;
         --name) BINARY_NAME=$2; shift 2;;
+        --compressed) COMPRESSION="compressed"; shift;;
+        --uncompressed) COMPRESSION="uncompressed"; shift;;
+        --new-trace) TRACE_TYPE="new"; shift;;
+        --old-trace) TRACE_TYPE="old"; shift;;
         --) shift; break;;
         *) break;;
     esac
@@ -83,6 +89,19 @@ if [ "$NUM_CORE" != "1" ]; then
 else
     echo "${BOLD}Building single-core ChampSim...${NORMAL}"
 fi
+
+# Check for new/old traces
+if [ "${TRACE_TYPE}" = "new" ]; then
+    echo "${BOLD}Building with new traces...${NORMAL}"
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DDATA_TRACE"
+fi
+
+# Check for compression on/off
+if [ "${COMPRESSION}" = "compressed" ]; then
+    echo "${BOLD}Building with compression enabled...${NORMAL}"
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSED_CACHE"
+fi
+ 
 echo
 echo "Command Line Arguments: ${COMPILE_OPTIONS}"
 

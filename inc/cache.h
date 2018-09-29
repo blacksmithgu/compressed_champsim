@@ -160,7 +160,9 @@ class CACHE : public MEMORY {
         pf_useful = 0;
         pf_useless = 0;
         pf_fill = 0;
-    };
+
+        is_compressed = false;
+    }
 
     // destructor
     ~CACHE() {

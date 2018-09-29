@@ -1,7 +1,6 @@
 #ifndef INSTRUCTION_H
 #define INSTRUCTION_H
 
-
 // instruction format
 #define ROB_SIZE 256
 #define LQ_SIZE 72
@@ -13,77 +12,44 @@
 
 #include "set.h"
 
-#define DATA_TRACE
-
 #ifndef DATA_TRACE
-class input_instr {
-  public:
 
+#pragma pack(push, 1)
+struct input_instr {
     // instruction pointer or PC (Program Counter)
-    uint64_t ip;
+    uint64_t ip = 0;
 
     // branch info
-    uint8_t is_branch;
-    uint8_t branch_taken;
+    uint8_t is_branch = 0;
+    uint8_t branch_taken = 0;
 
-    uint8_t destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
-    uint8_t source_registers[NUM_INSTR_SOURCES]; // input registers
+    uint8_t destination_registers[NUM_INSTR_DESTINATIONS] = {0}; // output registers
+    uint8_t source_registers[NUM_INSTR_SOURCES] = {0}; // input registers
 
-    uint64_t destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
-    uint64_t source_memory[NUM_INSTR_SOURCES]; // input memory
-
-    input_instr() {
-        ip = 0;
-        is_branch = 0;
-        branch_taken = 0;
-
-        for (uint32_t i=0; i<NUM_INSTR_SOURCES; i++) {
-            source_registers[i] = 0;
-            source_memory[i] = 0;
-        }
-
-        for (uint32_t i=0; i<NUM_INSTR_DESTINATIONS; i++) {
-            destination_registers[i] = 0;
-            destination_memory[i] = 0;
-        }
-    };
+    uint64_t destination_memory[NUM_INSTR_DESTINATIONS] = {0}; // output memory
+    uint64_t source_memory[NUM_INSTR_SOURCES] = {0}; // input memory
 };
+#pragma pack(pop)
 
 #else
-class input_instr {
-    public:
 
-        unsigned long long int ip;  // instruction pointer (program counter) value
+#pragma pack(push, 1)
+struct input_instr {
+    uint64_t ip = 0;  // instruction pointer (program counter) value
 
-        unsigned char is_branch;    // is this branch
-        unsigned char branch_taken; // if so, is this taken
+    uint8_t is_branch = 0;    // is this branch
+    uint8_t branch_taken = 0; // if so, is this taken
 
-        unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
-        unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+    uint8_t destination_registers[NUM_INSTR_DESTINATIONS] = {0}; // output registers
+    uint8_t source_registers[NUM_INSTR_SOURCES] = {0};           // input registers
 
-        unsigned long long int destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
-        unsigned long long int source_memory[NUM_INSTR_SOURCES];           // input memory
+    uint64_t destination_memory[NUM_INSTR_DESTINATIONS] = {0}; // output memory
+    uint64_t source_memory[NUM_INSTR_SOURCES] = {0};           // input memory
 
-        unsigned char destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES]; // output memory cache line values
-        unsigned char source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES]; // input memory cache line values
-
-        input_instr() {
-            ip = 0;
-            is_branch = 0;
-            branch_taken = 0;
-
-            for (uint32_t i=0; i<NUM_INSTR_SOURCES; i++) {
-                source_registers[i] = 0;
-                source_memory[i] = 0;
-            }
-
-            for (uint32_t i=0; i<NUM_INSTR_DESTINATIONS; i++) {
-                destination_registers[i] = 0;
-                destination_memory[i] = 0;
-            }
-        };
-
+    uint8_t destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES] = {{0}}; // output memory cache line values
+    uint8_t source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES] = {{0}}; // input memory cache line values
 };
+#pragma pack(pop)
 
 #endif
 
@@ -163,8 +129,8 @@ class ooo_model_instr {
 
     uint8_t source_registers[NUM_INSTR_SOURCES]; // input registers 
 
-    unsigned char destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES]; // output memory cache line values
-    unsigned char source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES]; // input memory cache line values
+    uint8_t destination_cache_line_value[NUM_INSTR_DESTINATIONS][CACHE_LINE_BYTES]; // output memory cache line values
+    uint8_t source_cache_line_value[NUM_INSTR_SOURCES][CACHE_LINE_BYTES]; // input memory cache line values
     // these are instruction ids of other instructions in the window
     //int64_t registers_instrs_i_depend_on[NUM_INSTR_SOURCES];
     // these are indices of instructions in the window that depend on me
@@ -248,16 +214,6 @@ class ooo_model_instr {
             sq_index[i] = UINT32_MAX;
             forwarding_index[i] = 0;
         }
-
-#if 0
-        for (uint32_t i=0; i<ROB_SIZE; i++) {
-            registers_instrs_depend_on_me[i] = 0;
-            memory_instrs_depend_on_me[i] = 0;
-
-            for (uint32_t j=0; j<NUM_INSTR_SOURCES; j++)
-                registers_index_depend_on_me[i][j] = 0;
-        }
-#endif
     };
 };
 
