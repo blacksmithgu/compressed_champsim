@@ -2,6 +2,7 @@ bin
 obj
 logs
 *.bak
+*.swp
 
 # OH WHY
 replacement/base_replacement.cc
