@@ -6,13 +6,36 @@
 #include "cache.h"
 #include "champsim.h"
 #include "instruction.h"
+
 #include "size_aware_optgen.h"
 #include "counter.h"
 
 #include <cstring>
+#include <functional>
+#include <map>
+#include <memory>
 
+// The maximum value a counter can take on in the predictor.
 #define COUNTER_MAX_VALUE 15
-#define RRPV_MAX_VALUE 15
+
+// The maximum value RRPV can reach in the cache.
+#define RRPV_MAX_VALUE (MAX_COMPRESSIBILITY * LLC_WAY - 1)
+
+// The predictor to use when making cache friendly/averse predictions.
+#ifndef PREDICTOR
+    #define PREDICTOR PCAndCompressionPredictor
+#endif
+
+// The RRPV policy to use to compute an overall RRPV score for a cache way, given multiple RRPV scores for each subblock
+// in a way.
+#ifndef RRPV_STRATEGY
+    #define RRPV_STRATEGY rrpv_average
+#endif
+
+// The cache model/generator to use; OPTgen by default.
+#ifndef CACHEGEN
+    #define CACHEGEN OPTgen<1024>
+#endif
 
 using namespace std;
 
@@ -52,19 +75,119 @@ struct CacheAccess {
     CacheAccess() {}
 };
 
+/**
+ * A generic interface for a predictor.
+ */
+struct Predictor {
+    virtual ~Predictor() {}
+
+    /**
+     * Trains the given cache access positively.
+     */
+    virtual void train(const CacheAccess& access) = 0;
+
+    /**
+     * Detrains the given cache access (i.e., trains it negatively).
+     */
+    virtual void detrain(const CacheAccess& access) = 0;
+
+    /**
+     * Returns true if the given access is predicted to be cache friendly, false if
+     * it is cache averse.
+     */
+    virtual bool is_friendly(const CacheAccess& access) = 0;
+};
+
+struct PCPredictor : public Predictor {
+    PCPredictor() : counters() { }
+    virtual ~PCPredictor() { }
+
+    /** Detrain a PC by reducing it's counter. */
+    virtual void detrain(const CacheAccess& access) override {
+        if(counters.find(access.pc) == counters.end())
+            counters[access.pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+        counters[access.pc].decrement();
+    }
+
+    /** Train a PC by increasing it's counter. */
+    virtual void train(const CacheAccess& access) override {
+        if(counters.find(access.pc) == counters.end())
+            counters[access.pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+        counters[access.pc].increment();
+    }
+
+    virtual bool is_friendly(const CacheAccess& access) override {
+        if(counters.find(access.pc) == counters.end())
+            return (COUNTER_MAX_VALUE / 2);
+
+        return counters[access.pc].value() >= COUNTER_MAX_VALUE / 2;
+    }
+private:
+    // PC-indexed counters.
+    map<uint64_t, Counter<COUNTER_MAX_VALUE>> counters;
+};
+
+// A map-friendly struct which contains both a PC and a compression value.
+struct PCAndCompression { 
+    uint64_t pc;
+    uint32_t compression;
+
+    PCAndCompression(uint64_t pc, uint32_t comp) : pc(pc), compression(comp) {}
+
+    bool operator==(const PCAndCompression& other) const {
+        return pc == other.pc && compression == other.compression;
+    }
+
+    bool operator<(const PCAndCompression& other) const {
+        return pc < other.pc || (pc == other.pc && compression < other.compression);
+    }
+};
+
+// Predictor which predicts using both PC and compression.
+struct PCAndCompressionPredictor : public Predictor {
+    PCAndCompressionPredictor() : counters() { }
+    virtual ~PCAndCompressionPredictor() { }
+
+    /** Detrain a PC/compression by reducing it's counter. */
+    virtual void detrain(const CacheAccess& access) override {
+        PCAndCompression pc_and_comp(access.pc, access.compression_factor);
+        if(counters.find(pc_and_comp) == counters.end())
+            counters[pc_and_comp] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+        counters[pc_and_comp].decrement();
+    }
+
+    /** Train a PC by increasing it's counter. */
+    virtual void train(const CacheAccess& access) override {
+        PCAndCompression pc_and_comp(access.pc, access.compression_factor);
+        if(counters.find(pc_and_comp) == counters.end())
+            counters[pc_and_comp] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
+
+        counters[pc_and_comp].increment();
+    }
+
+    virtual bool is_friendly(const CacheAccess& access) override {
+        PCAndCompression pc_and_comp(access.pc, access.compression_factor);
+        if(counters.find(pc_and_comp) == counters.end())
+            return (COUNTER_MAX_VALUE / 2);
+
+        return counters[pc_and_comp].value() >= COUNTER_MAX_VALUE / 2;
+    }
+private:
+    // PC AND compression-indexed counters.
+    map<PCAndCompression, Counter<COUNTER_MAX_VALUE>> counters;
+};
+
 // A map of address -> full cache accesses which we use in order to compute the optimal solution.
 map<uint64_t, CacheAccess> outstanding_accesses;
 
-// A map of PC -> saturating counter which tracks how cache friendly/averse each PC is.
-map<uint64_t, Counter<COUNTER_MAX_VALUE>> counters;
+// The predictor to use when making caching decisions.
+std::shared_ptr<Predictor> predictor;
 
-// A pair of maps tracking overall training/detraining.
-map<uint64_t, uint32_t> pc_training_counts;
-map<uint64_t, uint32_t> pc_detraining_counts;
-
-// A per-set collection of OPTgen data structures, used to compute the optimal labels of specific
-// cache accesses.
-OPTgen optgens[LLC_SET];
+// A per-set collection of cachegen data structures, used to compute the optimal labels of specific cache accesses.
+CACHEGEN optgens[LLC_SET];
 
 // A local "timer" counting the number of accesses to each set/optgen.
 uint32_t num_accesses[LLC_SET] = {0};
@@ -76,9 +199,85 @@ uint32_t rrpv[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY] = {0};
 // Contains metadata about all of the cache lines in the cache, indexed by set, way, and compressed index.
 CacheAccess accesses[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY];
 
+// Given a compressed cache block for a way, and an array of the way RRPV values, returns the RRPV for that way.
+// Initialized later, in CACHE::llc_initialize_replacement().
+std::function<uint32_t(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv)> rrpv_strategy;
+
+/** Computes the RRPV of a superblock to be the maximum of the subblock RRPV values. */
+uint32_t rrpv_max(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
+    uint32_t rrpv = 0;
+    for(uint32_t index = 0; index < way.compressionFactor; index++) {
+        if(!way.valid[index]) continue;
+
+        rrpv = std::max(rrpv, way_rrpv[index]);
+    }
+
+    return rrpv;
+}
+
+/** Computes the RRPV of a superblock to be the minimum of the subblock RRPV values. */
+uint32_t rrpv_min(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
+    uint32_t rrpv = RRPV_MAX_VALUE;
+    for(uint32_t index = 0; index < way.compressionFactor; index++) {
+        if(!way.valid[index]) continue;
+
+        rrpv = std::min(rrpv, way_rrpv[index]);
+    }
+
+    return rrpv;
+}
+
+/** Compute the RRPV as the average of the squared subblock RRPVs. */
+uint32_t rrpv_square_sum(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
+    uint32_t rrpv = 0, num_valid = 0;
+    for(uint32_t index = 0; index < way.compressionFactor; index++) {
+        if(!way.valid[index]) continue;
+
+        rrpv += way_rrpv[index] * way_rrpv[index];
+        num_valid++;
+    }
+
+    if(num_valid == 0) return 0;
+    else return rrpv / num_valid;
+}
+
+/** Compute the RRPV by taking the average of the subblock RRPVs. */
+uint32_t rrpv_average(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
+    uint32_t rrpv = 0, num_valid = 0;
+    for(uint32_t index = 0; index < way.compressionFactor; index++) {
+        if(!way.valid[index]) continue;
+
+        rrpv += way_rrpv[index];
+        num_valid++;
+    }
+
+    if(num_valid == 0) return 0;
+    else return rrpv / num_valid;
+}
+
 /**
- * Ages the RRPV of all lines by 1 in a set, saturating at RRPV_MAX_VALUE.
+ * Compute the RRPV by summing the existing RRPV entries, and rescaling the result by
+ * (MAX_COMPRESSIBILITY / num_valid_entries).
  */
+uint32_t rrpv_scaled_average(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
+    uint32_t rrpv = 0, num_valid = 0;
+    for(uint32_t index = 0; index < way.compressionFactor; index++) {
+        if(!way.valid[index]) continue;
+
+        rrpv += way_rrpv[index];
+        num_valid++;
+    }
+
+    uint32_t average = rrpv_average(way, way_rrpv);
+    while(num_valid < MAX_COMPRESSIBILITY) {
+        rrpv += average;
+        num_valid++;
+    }
+
+    return rrpv;
+}
+
+/** Ages the RRPV of all lines by 1 in a set, saturating at RRPV_MAX_VALUE. */
 void rrpv_age_lines(uint32_t set_index, COMPRESSED_CACHE_BLOCK* set) {
     // First, see if the cache-friendly lines have already reached the saturation point.
     // If they have, there's nothing for us to do.
@@ -88,7 +287,7 @@ void rrpv_age_lines(uint32_t set_index, COMPRESSED_CACHE_BLOCK* set) {
 
             // Quit out if there is already a max-RRPV entry.
             if(accesses[set_index][way][compression_index].prediction
-                    && rrpv[set_index][way][compression_index]== RRPV_MAX_VALUE - 1) return;
+                    && rrpv[set_index][way][compression_index] == RRPV_MAX_VALUE) return;
         }
     }
 
@@ -102,49 +301,17 @@ void rrpv_age_lines(uint32_t set_index, COMPRESSED_CACHE_BLOCK* set) {
     }
 }
 
-/**
- * Detrain a PC by reducing it's counter.
- */
-void pc_detrain(uint64_t pc) {
-    if(counters.find(pc) == counters.end())
-        counters[pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
-
-    counters[pc].decrement();
-    pc_detraining_counts[pc]++;
-}
-
-/**
- * Train a PC by increasing it's counter.
- */
-void pc_train(uint64_t pc) {
-    if(counters.find(pc) == counters.end())
-        counters[pc] = Counter<COUNTER_MAX_VALUE>(COUNTER_MAX_VALUE / 2);
-
-    counters[pc].increment();
-    pc_training_counts[pc]++;
-}
-
-/**
- * Returns the current bias (positive / (positive + negative)) of a PC.
- */
-double pc_bias(uint64_t pc) {
-    uint64_t training_count = pc_training_counts[pc];
-    uint64_t detraining_count = pc_detraining_counts[pc];
-    uint64_t total_count = training_count + detraining_count;
-
-    // A relatively optimistic outlook for PCs we have never trained!
-    if(total_count == 0)
-        return 1;
-
-    return (double) training_count / (double) total_count;
-}
-
-/**
- * Called to initialize the LLC replacement policy state.
- */
+/** Called to initialize the LLC replacement policy state. */
 void CACHE::llc_initialize_replacement() {
     // Initialize our optgen structures.
-    for(int x = 0; x < LLC_SET; x++) optgens[x] = OPTgen(LLC_WAY);
+    for(int x = 0; x < LLC_SET; x++) optgens[x] = CACHEGEN(LLC_WAY);
+
+    // Initialize the RRPV strategy, using the environment variable RRPV_STRATEGY.
+    rrpv_strategy = RRPV_STRATEGY;
+
+    // Similarly initialize the predictor, using the compiler variable PREDICTOR.
+    // For now, sub-optimally, we won't allow any arguments to be provided.
+    predictor = std::make_shared<PREDICTOR>();
 }
 
 /**
@@ -182,6 +349,8 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         if(current_set[way].sbTag != get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)) continue;
 
         // Ignore lines of a different compression factor.
+        // TODO: This may be suboptimal, we should throw out less compressible lines
+        // probably...
         if(current_set[way].compressionFactor != incoming_cf) continue;
 
         for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
@@ -200,7 +369,7 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         if(current_set[way].compressionFactor != 0) continue;
 
         // Otherwise, we found a line.
-        evicted_compressed_index = 0;
+        evicted_compressed_index = 4;
         return way;
     }
 
@@ -211,8 +380,11 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
             if(!current_set[way].valid[compression_index]) continue;
 
-            if(!optgens[set].should_cache(accesses[set][way][compression_index].optgen_time, num_accesses[set]))
-                pc_detrain(accesses[set][way][compression_index].pc);
+            uint64_t cf = accesses[set][way][compression_index].compression_factor;
+            uint64_t address = accesses[set][way][compression_index].full_address;
+            uint64_t quanta = accesses[set][way][compression_index].optgen_time;
+            if(!optgens[set].can_cache(quanta, num_accesses[set], address, cf))
+                predictor->detrain(accesses[set][way][compression_index]);
         }
     }
 
@@ -222,13 +394,8 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
     uint32_t max_rrpv = 0;
     uint32_t victim = 0;
     for(uint32_t way = 0; way < LLC_WAY; way++) {
-        // We define the RRPV of the superblock to be the best RRPV of the blocks in the superblock.
-        uint32_t superblock_rrpv = RRPV_MAX_VALUE;
-        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
-            if(!current_set[way].valid[compression_index]) continue;
-
-            superblock_rrpv = std::min(superblock_rrpv, rrpv[set][way][compression_index]);
-        }
+        // Compute the RRPV of the superblock according to the current strategy.
+        uint32_t superblock_rrpv = rrpv_strategy(current_set[way], rrpv[set][way]);
 
         if(superblock_rrpv > max_rrpv) {
             max_rrpv = superblock_rrpv;
@@ -246,7 +413,7 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
 
     // Otherwise, detrain the cache-friendly line as it betrayed expectations and then throw it out.
     for(uint32_t compression_index = 0; compression_index < current_set[victim].compressionFactor; compression_index++)
-        pc_detrain(accesses[set][victim][compression_index].pc);
+        predictor->detrain(accesses[set][victim][compression_index]);
 
     return victim;
 }
@@ -277,25 +444,24 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
         CacheAccess& access = access_iter->second;
 
         // Record the access in Optgen to get the hit/miss decision.
-        bool decision = optgens[set].try_cache(access.optgen_time, num_accesses[set]);
+        bool decision = optgens[set].try_cache(access.optgen_time, num_accesses[set], access.full_address, access.compression_factor);
 
         // Train this PC up or down in our counters based on the decision.
-        if(decision) pc_train(access.pc);
-        else pc_detrain(access.pc);
+        if(decision) predictor->train(access);
+        else predictor->detrain(access);
     }
 
     // Make a prediction based on the current counter values!
-    uint32_t counter_value = (counters.find(ip) != counters.end()) ? counters[ip].value() : (COUNTER_MAX_VALUE / 2);
-    bool prediction = (counter_value >= COUNTER_MAX_VALUE / 2);
-
-    CacheAccess access = CacheAccess(cpu, set, full_addr, line_addr, num_accesses[set], ip, cf, prediction);
+    // TODO: The access->prediction field is set after, very awkwardly...
+    CacheAccess access = CacheAccess(cpu, set, full_addr, line_addr, num_accesses[set], ip, cf, true);
+    access.prediction = predictor->is_friendly(access);
 
     // Update the state of the newly inserted line, including setting up the RRPV and aging other lines in the cache.
     accesses[set][way][compressed_index] = access;
 
     // TODO: We need to do something smarter than just setting RRPV to whatever the latest prediction is! We should take
     // the best of the blocks in a given way.
-    if(prediction) {
+    if(access.prediction) {
         rrpv[set][way][cf] = 0;
         if(!hit) rrpv_age_lines(set, this->compressed_cache_block[set]);
         rrpv[set][way][cf] = 0;

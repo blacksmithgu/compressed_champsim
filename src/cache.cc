@@ -15,9 +15,6 @@ void CACHE::configure_compressed_cache()
             compressed_cache_block[i][j].compressionFactor = 0;
         }
     }
-    compressible4 = 0;
-    compressible2 = 0;
-    uncompressible = 0;
 }
 #endif
 
@@ -1160,9 +1157,6 @@ unsigned BDICompress (char * buffer, unsigned _blockSize)
 uint64_t CACHE::getCF(char* data, bool count)
 {
     unsigned int CF = 64 / BDICompress(data, 64);
-    if(CF >= 4) { if(count) compressible4++; return 4; }
-    if(CF >= 2) { if(count) compressible2++; return 2; }
-    if(count) uncompressible++;
     return CF;
 }
 

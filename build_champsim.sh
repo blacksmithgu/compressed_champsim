@@ -1,6 +1,7 @@
 #!/bin/sh
 
-OPTIONS=$(getopt -o b:p:r:p:c:n: --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace -- "$@")
+OPTIONS=$(getopt -o b:p:r:p:c:n:s:w: \
+    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways: -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 
@@ -16,6 +17,8 @@ COMPILE_OPTIONS=
 BINARY_NAME=
 COMPRESSION="compressed"
 TRACE_TYPE="new"
+LLC_SETS=2048
+LLC_WAYS=16
 
 while true; do
     case "$1" in
@@ -29,6 +32,8 @@ while true; do
         --uncompressed) COMPRESSION="uncompressed"; shift;;
         --new-trace) TRACE_TYPE="new"; shift;;
         --old-trace) TRACE_TYPE="old"; shift;;
+        --llc-sets) LLC_SETS=$2; shift 2;;
+        --llc-ways) LLC_WAYS=$2; shift 2;;
         --) shift; break;;
         *) break;;
     esac
@@ -101,6 +106,10 @@ if [ "${COMPRESSION}" = "compressed" ]; then
     echo "${BOLD}Building with compression enabled...${NORMAL}"
     COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSED_CACHE"
 fi
+
+# Print out how many sets/ways to build for.
+echo "${BOLD}Building with ${LLC_SETS} sets / ${LLC_WAYS} ways...${NORMAL}"
+COMPILE_OPTIONS="${COMPILE_OPTIONS} -DLLC_SET_PERCORE=${LLC_SETS} -DLLC_WAY=${LLC_WAYS}"
  
 echo
 echo "Command Line Arguments: ${COMPILE_OPTIONS}"
@@ -132,6 +141,7 @@ echo "L1D Prefetcher: ${L1D_PREFETCHER}"
 echo "L2C Prefetcher: ${L2C_PREFETCHER}"
 echo "LLC Replacement: ${LLC_REPLACEMENT}"
 echo "Cores: ${NUM_CORE}"
+echo "Sets: ${LLC_SETS} / Ways: ${LLC_WAYS}"
 echo "Binary: bin/${BINARY_NAME}${NORMAL}"
 echo ""
 mv bin/champsim bin/${BINARY_NAME}
