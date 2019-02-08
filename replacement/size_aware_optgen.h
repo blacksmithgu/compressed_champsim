@@ -120,6 +120,8 @@ template<size_t capacity> struct OPTgen : public CacheGen {
     uint64_t cache_size;
 
     OPTgen(uint32_t cache_size) : cache_size(cache_size) {}
+    OPTgen(const OPTgen& other) : liveness(other.liveness), num_cached(other.num_cached), num_attempted_cached(other.num_attempted_cached),
+        cache_size(other.cache_size) {}
     OPTgen() : OPTgen(16) {}
 
     /**
