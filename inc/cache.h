@@ -142,6 +142,7 @@ class CACHE : public MEMORY {
             }
         }
 
+        // instrumentation / performance counters.
         for (uint32_t i=0; i<NUM_CPUS; i++) {
             upper_level_icache[i] = NULL;
             upper_level_dcache[i] = NULL;
@@ -156,6 +157,7 @@ class CACHE : public MEMORY {
             }
         }
 
+        // misc. metadata and more performance counters.
         lower_level = NULL;
         extra_interface = NULL;
         prefetcher_level_dcache = NULL;
@@ -243,16 +245,20 @@ class CACHE : public MEMORY {
     void configure_compressed_cache();
     int  check_hit_cc(PACKET *packet),
          invalidate_entry_cc(uint64_t inval_addr);
-    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compression_index, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency);
 
-    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index);
+    // Utility methods; all take the cache line addresses (i.e., addresses which have been right shifted to drop the
+    // offset bits).
+    uint32_t get_set_cc(uint64_t line_address);
+    uint32_t get_blkid_cc(uint64_t line_address);
+    uint64_t get_sb_tag(uint64_t line_address);
+    uint64_t get_compression_factor(char* data);
 
-    uint32_t get_set_cc(uint64_t address);
-    uint32_t get_blkid_cc(uint64_t address);
-    uint64_t get_sb_tag(uint64_t address);
-    uint64_t getCF(char* data, bool count=false);
     void fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packet);
     uint8_t evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uint32_t& evicted_cf);
+
+    // Implemented by external replacement policies.
+    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compression_index, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency);
+    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index);
 #endif
 
     bool is_fake_hit(uint64_t) { return false; }

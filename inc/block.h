@@ -165,8 +165,8 @@ class PACKET {
 
     uint32_t cpu, data_index, lq_index, sq_index;
 
-    uint64_t address, 
-             full_addr, 
+    uint64_t address, // The cache line address (i.e., full_addr shifted right lg2(CACHE_LINE_SIZE) bytes.)
+             full_addr,  // The full address of the access.
              instruction_pa,
              data_pa,
              data,

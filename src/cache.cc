@@ -39,17 +39,15 @@ void CACHE::handle_fill()
 
 #ifdef COMPRESSED_CACHE
         uint32_t evicted_cf = 0;
-        uint32_t compression_factor = getCF(MSHR.entry[mshr_index].program_data);
+        uint32_t compression_factor = get_compression_factor(MSHR.entry[mshr_index].program_data);
 #endif
 
         if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
-            if(is_compressed)
-            {
+            if(is_compressed) {
                 set = get_set_cc(MSHR.entry[mshr_index].address);
                 way = llc_find_victim_cc(fill_cpu, MSHR.entry[mshr_index].instr_id, set, compressed_cache_block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type, compression_factor, evicted_cf);
-            }
-            else
+            } else
 #endif
                 way = llc_find_victim(fill_cpu, MSHR.entry[mshr_index].instr_id, set, block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type);
         }
@@ -98,9 +96,11 @@ void CACHE::handle_fill()
 
         uint8_t  do_fill = 1;
 #ifdef COMPRESSED_CACHE
-        if(is_compressed)
-            do_fill = evict_compressed_line(set, way, MSHR.entry[mshr_index], evicted_cf);
-#else
+        if(is_compressed) do_fill = evict_compressed_line(set, way, MSHR.entry[mshr_index], evicted_cf);
+        else {
+            // TODO: OH GOD KILL ME
+#endif
+
         bool evicted_block_dirty = block[set][way].dirty;
         uint64_t evicted_block_addr = block[set][way].address;
 
@@ -146,6 +146,8 @@ void CACHE::handle_fill()
             }
 #endif
         }
+#ifdef COMPRESSED_CACHE
+        }
 #endif
 
         if (do_fill) {
@@ -158,6 +160,7 @@ void CACHE::handle_fill()
             // update replacement policy
             if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
+                // TODO: full_addr[evicted_cf] may be non-sensical.
                 if(is_compressed)
                     llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], MSHR.entry[mshr_index].type, compression_factor, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
                 else
@@ -246,23 +249,23 @@ void CACHE::handle_writeback()
         int way = check_hit(&WQ.entry[index]);
         bool force_victim = false;
 #ifdef COMPRESSED_CACHE
-        uint32_t compression_factor = getCF(WQ.entry[index].program_data);
+        uint32_t compression_factor = get_compression_factor(WQ.entry[index].program_data);
         uint32_t myCF = 0;
 
         if(is_compressed)
         {
             set = get_set_cc(WQ.entry[index].address);
             way = check_hit_cc(&WQ.entry[index]);
-            //assert(check_hit(&WQ.entry[index]) == check_hit_cc(&WQ.entry[index]));
+
             //Hit
             if(way >= 0) {
-                if(compressed_cache_block[set][way].compressionFactor != compression_factor)
-                {
-                    //What if this line is dirty? We are writing the same line, so even it was dirty, the value is being overwritten.
+                if(compressed_cache_block[set][way].compressionFactor != compression_factor) {
+                    // What if this line is dirty? We are writing the same line, so even it was dirty, the value is being overwritten.
                     invalidate_entry_cc(WQ.entry[index].address); 
                     force_victim = true;
                 }
             }
+            
         }
 #endif
 
@@ -430,9 +433,10 @@ void CACHE::handle_writeback()
 
                 uint8_t  do_fill = 1;
 #ifdef COMPRESSED_CACHE
-                if(is_compressed)
-                    do_fill = evict_compressed_line(set, way, WQ.entry[index], evicted_cf);
-#else
+                if(is_compressed) do_fill = evict_compressed_line(set, way, WQ.entry[index], evicted_cf);
+                else {
+                    // TODO: OH GOD KILL ME
+#endif
                 bool evicted_block_dirty = block[set][way].dirty;
                 uint64_t evicted_block_addr = block[set][way].address;
 
@@ -478,6 +482,8 @@ void CACHE::handle_writeback()
                     }
 #endif
                 }
+#ifdef COMPRESSED_CACHE
+                }
 #endif
 
                 if (do_fill) {
@@ -490,6 +496,7 @@ void CACHE::handle_writeback()
                     // update replacement policy
                     if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
+                    // TODO: full_addr[evicted_cf] may be nonsensical.
                     if(is_compressed)
                         llc_update_replacement_state_cc(writeback_cpu, set, way, evicted_cf, WQ.entry[index].full_addr, WQ.entry[index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], WQ.entry[index].type, compression_factor, 0, 0, 0);
                     else
@@ -559,7 +566,6 @@ void CACHE::handle_read()
             {
                 set = get_set_cc(RQ.entry[index].address);
                 way = check_hit_cc(&RQ.entry[index]);
-                //assert(check_hit(&RQ.entry[index]) == check_hit_cc(&RQ.entry[index]));
             }
 #endif        
 
@@ -812,7 +818,6 @@ void CACHE::handle_prefetch()
         {
             set = get_set_cc(PQ.entry[index].address);
             way = check_hit_cc(&PQ.entry[index]);
-            //assert(check_hit(&PQ.entry[index]) == check_hit_cc(&PQ.entry[index]));
         }
 #endif        
 
@@ -981,17 +986,16 @@ uint32_t CACHE::get_set(uint64_t address)
 
 #ifdef COMPRESSED_CACHE
 
-//Note addresses passed to these methods already drop off the last 6 bits.
+// Note: addresses passed to these methods already drop off the last 6 bits.
 uint32_t CACHE::get_set_cc(uint64_t address)
 {
-    //Drop last 2 bits because they are included in block ID;
+    // Drop last 2 bits because they are included in block ID.
     return (uint32_t) ((address >> lg2(MAX_COMPRESSIBILITY)) & ((1 << lg2(NUM_SET)) - 1)); 
 }
 
 uint32_t CACHE::get_blkid_cc(uint64_t address)
 {
-    uint32_t blkId = (address % MAX_COMPRESSIBILITY);
-    return blkId;
+    return (address % MAX_COMPRESSIBILITY);
 }
 
 uint64_t CACHE::get_sb_tag(uint64_t address)
@@ -1154,9 +1158,13 @@ unsigned BDICompress (char * buffer, unsigned _blockSize)
     return bestCSize;
 }
 
-uint64_t CACHE::getCF(char* data, bool count)
+uint64_t CACHE::get_compression_factor(char* data)
 {
+    // TODO: Inject alternative methods for computing the compression factor; primarily synthetic methods.
+
     unsigned int CF = 64 / BDICompress(data, 64);
+    if(CF > 4) CF = 4;
+
     return CF;
 }
 
@@ -1285,16 +1293,16 @@ int CACHE::invalidate_entry(uint64_t inval_addr)
 
 #ifdef COMPRESSED_CACHE
 
-void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packet)
-{
+void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packet) {
     assert(cache_type == IS_LLC);
-    //assert(cf == 0);
+    assert(cf < MAX_COMPRESSIBILITY);
+    assert(set < LLC_SET && way < LLC_WAY);
 
     if (compressed_cache_block[set][way].prefetch[cf] && (compressed_cache_block[set][way].used[cf] == 0))
         pf_useless++;
 
-    if (compressed_cache_block[set][way].valid[cf] == 0)
-        compressed_cache_block[set][way].valid[cf] = 1;
+    // Reset the cache fields - set the position to valid, clean and unused.
+    compressed_cache_block[set][way].valid[cf] = 1;
     compressed_cache_block[set][way].dirty[cf] = 0;
     compressed_cache_block[set][way].prefetch[cf] = (packet->type == PREFETCH) ? 1 : 0;
     compressed_cache_block[set][way].used[cf] = 0;
@@ -1302,8 +1310,9 @@ void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packe
     if (compressed_cache_block[set][way].prefetch[cf])
         pf_fill++;
 
+    // Set the identifying information - tag, compression factor, and block ID.
     compressed_cache_block[set][way].sbTag = get_sb_tag(packet->address);
-    compressed_cache_block[set][way].compressionFactor = getCF(packet->program_data, true);
+    compressed_cache_block[set][way].compressionFactor = get_compression_factor(packet->program_data);
     compressed_cache_block[set][way].blkId[cf] = get_blkid_cc(packet->address);
 
     compressed_cache_block[set][way].delta = packet->delta;
@@ -1326,13 +1335,11 @@ void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packe
     cout << " data: " << compressed_cache_block[set][way].data[cf] << dec << endl; });
 }
 
-int CACHE::check_hit_cc(PACKET *packet)
-{
+int CACHE::check_hit_cc(PACKET *packet) {
     assert(cache_type == IS_LLC);
+
     uint32_t set = get_set_cc(packet->address);
-    //assert(set == get_set(packet->address));
-    uint32_t myBlkId = get_blkid_cc(packet->address);
-    int match_way = -1;
+    uint32_t block_id = get_blkid_cc(packet->address);
 
     if (NUM_SET < set) {
         cerr << "[" << NAME << "_ERROR] " << __func__ << " invalid set index: " << set << " NUM_SET: " << NUM_SET;
@@ -1341,41 +1348,28 @@ int CACHE::check_hit_cc(PACKET *packet)
         assert(0);
     }
 
-    // hit
-    for (uint32_t way=0; way<NUM_WAY; way++) {
-        if (compressed_cache_block[set][way].sbTag == get_sb_tag(packet->address)) {
-            for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
-                if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
+    for(uint32_t way = 0; way < NUM_WAY; way++) {
+        // Skip any ways which don't have the same superblock tag.
+        if(compressed_cache_block[set][way].sbTag != get_sb_tag(packet->address)) continue;
 
-                    match_way = way;
-
-                    DP ( if (warmup_complete[packet->cpu]) {
-                        cout << "[" << NAME << "] " << __func__ << " instr_id: " << packet->instr_id << " type: " << +packet->type << hex << " addr: " << packet->address;
-                        cout << " full_addr: " << packet->full_addr << " tag: " << compressed_cache_block[set][way].tag << " data: " << compressed_cache_block[set][way].data << dec;
-                        cout << " set: " << set << " way: " << way << " lru: " << compressed_cache_block[set][way].lru;
-                        cout << " event: " << packet->event_cycle << " cycle: " << current_core_cycle[cpu] << endl; });
-
-                    break;
-                }
-            }
+        // Check if any of the block IDs in this way are valid + match the given block ID.
+        for(uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
+            if(compressed_cache_block[set][way].valid[cf] && compressed_cache_block[set][way].blkId[cf] == block_id) return way;
         }
     }
 
-    return match_way;
+    return -1;
 }
 
-uint8_t CACHE::evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uint32_t& evicted_cf)
-{
+uint8_t CACHE::evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uint32_t& evicted_cf) {
     assert(is_compressed);
     uint32_t num_dirty = 1;
     uint8_t do_fill = 1;
 
-    //TODO: What if multiple blocks are dirty? Then evicted index should be 4
-    if(evicted_cf >= 4)
-    {
+    // evicted_cf = 4 if the entire way should be evicted.
+    if(evicted_cf >= MAX_COMPRESSIBILITY) {
         num_dirty = 0;
-        for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) 
-        {
+        for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].dirty[cf] == 1))
                 num_dirty++; 
         }
@@ -1384,36 +1378,26 @@ uint8_t CACHE::evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uin
     bool evicted_block_dirty = 0;
     uint64_t evicted_block_addr = 0;
 
-    for(uint32_t i=0; i<num_dirty; i++)
-    {
+    for(uint32_t i=0; i<num_dirty; i++) {
         uint32_t index = evicted_cf;
-        if(evicted_cf < 4)
-        {
+        if(evicted_cf < MAX_COMPRESSIBILITY) {
             evicted_block_dirty = compressed_cache_block[set][way].dirty[evicted_cf];
             evicted_block_addr = compressed_cache_block[set][way].address[evicted_cf];
-        }
-        else
-        {
-            for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) 
-            {
-                if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].dirty[cf] == 1))
-                {
+        } else {
+            for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
+                if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].dirty[cf] == 1)) {
                     evicted_block_dirty = compressed_cache_block[set][way].dirty[cf];
                     evicted_block_addr = compressed_cache_block[set][way].address[cf];
                     index = cf;
                     break;
                 }
             }
-            assert(index < 4);
         }
 
-        if(evicted_block_dirty)
-        {
+        if(evicted_block_dirty) {
             // check if the lower level WQ has enough room to keep this writeback request
-            if (lower_level) 
-            {
+            if (lower_level) {
                 if (lower_level->get_occupancy(2, evicted_block_addr) == lower_level->get_size(2, evicted_block_addr)) {
-
                     // lower level WQ is full, cannot replace this victim
                     do_fill = 0;
                     lower_level->increment_WQ_FULL(evicted_block_addr);
@@ -1423,8 +1407,7 @@ uint8_t CACHE::evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uin
                             cout << "[" << NAME << "] " << __func__ << "do_fill: " << +do_fill;
                             cout << " lower level wq is full!" << " fill_addr: " << hex << MSHR.entry[mshr_index].address;
                             cout << " victim_addr: " << evicted_block_addr << dec << endl; });
-                }
-                else {
+                } else {
                     PACKET writeback_packet;
 
                     writeback_packet.fill_level = fill_level << 1;
@@ -1452,17 +1435,14 @@ uint8_t CACHE::evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uin
         }
     }
 
-    if(evicted_cf >= 4) 
-        evicted_cf = 0;
+    if(evicted_cf >= 4) evicted_cf = 0;
 
     return do_fill;
 }
 
-int CACHE::invalidate_entry_cc(uint64_t inval_addr)
-{
+int CACHE::invalidate_entry_cc(uint64_t inval_addr) {
     uint32_t set = get_set_cc(inval_addr);
-    uint32_t myBlkId = get_blkid_cc(inval_addr);
-    int match_way = -1;
+    uint32_t block_id = get_blkid_cc(inval_addr);
 
     if (NUM_SET < set) {
         cerr << "[" << NAME << "_ERROR] " << __func__ << " invalid set index: " << set << " NUM_SET: " << NUM_SET;
@@ -1470,40 +1450,39 @@ int CACHE::invalidate_entry_cc(uint64_t inval_addr)
         assert(0);
     }
 
-    // invalidate
-    for (uint32_t way=0; way<NUM_WAY; way++) {
-        if (compressed_cache_block[set][way].sbTag == get_sb_tag(inval_addr)) {
-            for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
-                if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
+    int evicted_way = -1, evicted_cf = -1;
+    for(uint32_t way = 0; way < NUM_WAY; way++) {
+        // Skip any ways which don't have the same superblock tag.
+        if(compressed_cache_block[set][way].sbTag != get_sb_tag(inval_addr)) continue;
 
-                    compressed_cache_block[set][way].valid[cf] = 0;
-
-                    match_way = way;
-
-                    DP ( if (warmup_complete[cpu]) {
-                            cout << "[" << NAME << "] " << __func__ << " inval_addr: " << hex << inval_addr;  
-                            cout << " tag: " << compressed_cache_block[set][way].tag << " data: " << compressed_cache_block[set][way].data << dec;
-                            cout << " set: " << set << " way: " << way << " lru: " << compressed_cache_block[set][way].lru << " cycle: " << current_core_cycle[cpu] << endl; });
-
-                    break;
-                }
+        // Check if any of the block IDs in this way are valid + match the given block ID.
+        for(uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
+            if(compressed_cache_block[set][way].valid[cf] && compressed_cache_block[set][way].blkId[cf] == block_id) {
+                evicted_way = way;
+                evicted_cf = cf;
+                break;
             }
         }
     }
 
-    bool is_valid = false;
-    for (uint32_t cf = 0; cf < compressed_cache_block[set][match_way].compressionFactor; cf++) 
-    {
-        if (compressed_cache_block[set][match_way].valid[cf] == 1)
-        {
-            is_valid = true;
+    // Return early if that address resulted in a cache miss.
+    if(evicted_way <= -1) return -1;
+
+    // Set the way to not be valid, and check if the entire line should be invalidated.
+    compressed_cache_block[set][evicted_way].valid[evicted_cf] = 0;
+
+    bool any_valid = false;
+    for(uint32_t cf = 0; cf < compressed_cache_block[set][evicted_way].compressionFactor; cf++) {
+        if(compressed_cache_block[set][evicted_way].valid[cf]) {
+            any_valid = true;
             break;
         }
     }
-    if(!is_valid)
-        compressed_cache_block[set][match_way].compressionFactor = 0;
 
-    return match_way;
+    // Invalidate the entire line if no way is valid.
+    if(!any_valid) compressed_cache_block[set][evicted_way].compressionFactor = 0;
+
+    return evicted_way;
 }
 #endif
 
