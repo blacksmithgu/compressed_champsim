@@ -1,7 +1,0 @@
-Executable = BUILD_DIR/EXEC_NAME
-Arguments = -warmup_instructions 0 -simulation_instructions 250000000 -output_decision LOG_DIR/EXEC_NAME/JOB_ID/BENCHMARK.decisions -access_history /scratch/cluster/roshan/CacheReplacement/logs/trace_history/nocache/BENCHMARK.decisions -traces TRACE_DIR/BENCHMARK.trace.gz
-Log = LOG_DIR/temp/EXEC_NAME.BENCHMARK.log
-Output = LOG_DIR/EXEC_NAME/JOB_ID/BENCHMARK.txt
-Error = LOG_DIR/temp/EXEC_NAME.BENCHMARK.err
-Notification = Error
-Queue

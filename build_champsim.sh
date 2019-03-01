@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 
 OPTIONS=$(getopt -o b:p:r:p:c:n:s:w: \
     --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways: -- "$@")
@@ -44,6 +44,10 @@ COMPILE_OPTIONS=$@
 if [ -z "${BINARY_NAME}" ]; then
     BINARY_NAME="${BRANCH}-${L1D_PREFETCHER}-${L2C_PREFETCHER}-${LLC_REPLACEMENT}-${NUM_CORE}core"
 fi
+
+# CD into the root champsim directory during build...
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+cd ${SCRIPT_DIR}
 
 ############## Some useful macros ###############
 BOLD=$(tput bold)

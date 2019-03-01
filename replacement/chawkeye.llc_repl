@@ -8,6 +8,7 @@
 #include "instruction.h"
 
 #include "size_aware_optgen.h"
+#include "compression_tracker.h"
 #include "counter.h"
 
 #include <cstring>
@@ -202,6 +203,9 @@ CacheAccess accesses[LLC_SET][LLC_WAY][MAX_COMPRESSIBILITY];
 // Given a compressed cache block for a way, and an array of the way RRPV values, returns the RRPV for that way.
 // Initialized later, in CACHE::llc_initialize_replacement().
 std::function<uint32_t(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv)> rrpv_strategy;
+
+// Tracks compressibility of lines coming into the cache.
+CompressionTracker compression_tracker;
 
 /** Computes the RRPV of a superblock to be the maximum of the subblock RRPV values. */
 uint32_t rrpv_max(const COMPRESSED_CACHE_BLOCK& way, const uint32_t* way_rrpv) {
@@ -434,6 +438,9 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     if (hit && (type == WRITEBACK))
         return;
 
+    // Record compressibility of this line.
+    compression_tracker.increment(cf);
+
     // Compute the address of the corresponding cache line, using that to create the cache access and do all the
     // memory-related operations.
     uint64_t line_addr = full_addr & ~(BLOCK_SIZE - 1);
@@ -484,5 +491,5 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 }
 
 void CACHE::llc_replacement_final_stats() {
-
+    compression_tracker.print();
 }
