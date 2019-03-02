@@ -7,6 +7,8 @@
 #include <vector>
 #include <deque>
 #include <inttypes.h>
+#include <array>
+#include <map>
 
 /**
  * A generic interface for a cache model which we can query to check if a given usage interval could/could not be
