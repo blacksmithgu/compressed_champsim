@@ -4,7 +4,7 @@
 # Creates condor run files for all executables in a champ sim /bin folder.
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-OPTIONS=$(getopt -o n:o:r:t:u: --long name:,output:,rundir:,traces:,user: -- "$@")
+OPTIONS=$(getopt -o n:o:r:t:u:s --long name:,output:,rundir:,traces:,user:,submit -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 eval set -- "$OPTIONS"
@@ -14,6 +14,7 @@ SCRIPT_OUTPUT=
 RUNDIR=
 USER=$(whoami)
 TRACE_DIR=
+SUBMIT="no"
 
 while true; do
     case "$1" in
@@ -22,6 +23,7 @@ while true; do
         --rundir|-r) RUNDIR=$2; shift 2;;
         --user|-u) USER=$2; shift 2;;
         --traces|-t) TRACE_DIR=$2; shift 2;;
+        --submit|-s) SUBMIT="yes"; shift;;
         --) shift; break;;
         *) break;;
     esac
@@ -56,4 +58,9 @@ mkdir -p ${SCRIPT_OUTPUT}
 for EXE in $(ls ${BIN}); do
     ${SCRIPT_DIR}/gen_condor_compressed_champsim.sh --traces ${TRACE_DIR} --executable ${BIN}/${EXE} \
         --rundir ${RUNDIR}/${RUN_NAME}/${EXE} --user ${USER} > ${SCRIPT_OUTPUT}/${EXE}.condor
+
+    # If submit is true
+    if [ "${SUBMIT}" = "yes" ]; then
+        condor_submit ${SCRIPT_OUTPUT}/${EXE}.condor
+    fi
 done
