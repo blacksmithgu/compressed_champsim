@@ -1,5 +1,7 @@
 #include "cache.h"
 #include "set.h"
+#include "compression/bdi.h"
+#include "compression/cpack.h"
 
 uint64_t l2pf_access = 0;
 #ifdef COMPRESSED_CACHE
@@ -1003,167 +1005,24 @@ uint64_t CACHE::get_sb_tag(uint64_t address)
     return (address >> (lg2(MAX_COMPRESSIBILITY)+lg2(NUM_SET)));
 }
 
-static unsigned long long my_llabs ( long long x )
-{
-   unsigned long long t = x >> 63;
-   return (x ^ t) - t;
-}
+uint64_t CACHE::get_compression_factor(char* data) {
+    // TODO: Using ifdef is as awful as it ever was; this would optimally be a command line argument, but ChampSim is
+    // unfortunately built around compiler flags instead of command line-args.
+#if defined(COMPRESSION_CPACK)
+    uint8_t dummy_buffer[68];
+    unsigned int CF = 64 / cpack::compress((uint8_t*) data, dummy_buffer);
+#elif defined(COMPRESSION_FPC)
+    unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 2);
+#elif defined(COMPRESSION_NONE)
+    unsigned int CF = 64;
+#else
+    // Default compression scheme is BDI.
+    unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 1);
+#endif
 
-long long unsigned * convertBuffer2Array (char * buffer, unsigned size, unsigned step)
-{
-      long long unsigned * values = (long long unsigned *) malloc(sizeof(long long unsigned) * size/step);
-     //init
-     unsigned int i,j; 
-     for (i = 0; i < size / step; i++) {
-          values[i] = 0;    // Initialize all elements to zero.
-      }
-      for (i = 0; i < size; i += step ){
-          for (j = 0; j < step; j++){
-              values[i / step] += (long long unsigned)((unsigned char)buffer[i + j]) << (8*j);
-          }
-      }
-      return values;
-}
-
-///
-/// Check if the cache line consists of only zero values
-///
-int isZeroPackable ( long long unsigned * values, unsigned size){
-  int nonZero = 0;
-  unsigned int i;
-  for (i = 0; i < size; i++) {
-      if( values[i] != 0){
-          nonZero = 1;
-          break;
-      }
-  }
-  return !nonZero;
-}
-
-///
-/// Check if the cache line consists of only same values
-///
-int isSameValuePackable ( long long unsigned * values, unsigned size){
-  int notSame = 0;
-  unsigned int i;
-  for (i = 0; i < size; i++) {
-      if( values[0] != values[i]){
-          notSame = 1;
-          break;
-      }
-  }
-  return !notSame;
-}
-
-
-unsigned multBaseCompression ( long long unsigned * values, unsigned size, unsigned blimit, unsigned bsize){
-    unsigned long long limit = 0;
-    unsigned BASES = 3;
-    //define the appropriate size for the mask
-    switch(blimit){
-        case 1:
-            limit = 0xFF;
-            break;
-        case 2:
-            limit = 0xFFFF;
-            break;
-        case 4:
-            limit = 0xFFFFFFFF;
-            break;
-        default:
-            std::cerr << "Wrong blimit value = " <<  blimit << std::endl;
-            exit(1);
-    }
-    // finding bases: # BASES
-    //std::vector<unsigned long long> mbases;
-    //mbases.push_back(values[0]); //add the first base
-    unsigned long long mbases [64];
-    unsigned baseCount = 1;
-    mbases[0] = 0;
-    unsigned int i,j;
-    for (i = 0; i < size; i++) {
-        for(j = 0; j <  baseCount; j++){
-            if( my_llabs((long long int)(mbases[j] -  values[i])) > limit ){
-                //mbases.push_back(values[i]); // add new base
-                bool new_base = true;
-                for(uint32_t k = 0; k <  baseCount; k++){
-                    if(mbases[k] == values[i])
-                    {
-                        new_base = false;
-                        break;
-                    }
-                }
-                if(new_base)
-                    mbases[baseCount++] = values[i];  
-            }
-        }
-        if(baseCount >= BASES) //we don't have more bases
-            break;
-    }
-    // find how many elements can be compressed with mbases
-    unsigned compCount = 0;
-    for (i = 0; i < size; i++) {
-        //ol covered = 0;
-        for(j = 0; j <  baseCount; j++){
-            if( my_llabs((long long int)(mbases[j] -  values[i])) <= limit ){
-                compCount++;
-                break;
-            }
-        }
-    }
-
-    unsigned mCompSize = blimit * compCount + bsize * (BASES-1) + (size - compCount) * bsize;
-    if(compCount < size)
-        return size * bsize;
-
-    return mCompSize;
-}
-
-unsigned BDICompress (char * buffer, unsigned _blockSize)
-{
-    long long unsigned * values = convertBuffer2Array( buffer, _blockSize, 8);
-    unsigned bestCSize = _blockSize;
-    unsigned currCSize = _blockSize;
-    if( isZeroPackable( values, _blockSize / 8))
-        bestCSize = 1;
-    if( isSameValuePackable( values, _blockSize / 8))
-        currCSize = 8;
-
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    currCSize = multBaseCompression( values, _blockSize / 8, 1, 8);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    currCSize = multBaseCompression( values, _blockSize / 8, 2, 8);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    currCSize = multBaseCompression( values, _blockSize / 8, 4, 8);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    free(values);
-
-    values = convertBuffer2Array( buffer, _blockSize, 4);
-    if( isSameValuePackable( values, _blockSize / 4))
-        currCSize = 4;
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    currCSize = multBaseCompression( values, _blockSize / 4, 1, 4);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    currCSize = multBaseCompression( values, _blockSize / 4, 2, 4);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    free(values);
-    values = convertBuffer2Array( buffer, _blockSize, 2);
-    currCSize = multBaseCompression( values, _blockSize / 2, 1, 2);
-    bestCSize = bestCSize > currCSize ? currCSize: bestCSize;
-    free(values);
-
-    //delete [] buffer;
-    buffer = NULL;
-    values = NULL;
-    return bestCSize;
-}
-
-uint64_t CACHE::get_compression_factor(char* data)
-{
-    // TODO: Inject alternative methods for computing the compression factor; primarily synthetic methods.
-
-    unsigned int CF = 64 / BDICompress(data, 64);
     if(CF > 4) CF = 4;
+    else if(CF > 2) CF = 2;
+    else if(CF <= 0) CF = 1;
 
     return CF;
 }

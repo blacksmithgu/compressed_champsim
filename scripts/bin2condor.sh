@@ -1,6 +1,7 @@
 #!/bin/bash
+# Usage: ./bin2condor.sh --name <name> --output <script_output_dir>
+#           --rundir <champsim_output_dir> --traces <trace_dir> [--user <notify_user>]
 # Creates condor run files for all executables in a champ sim /bin folder.
-# This is very hardcoded :)
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 OPTIONS=$(getopt -o n:o:r:t:u: --long name:,output:,rundir:,traces:,user: -- "$@")
@@ -54,5 +55,5 @@ mkdir -p ${SCRIPT_OUTPUT}
 # Generate a condor run script for each binary.
 for EXE in $(ls ${BIN}); do
     ${SCRIPT_DIR}/gen_condor_compressed_champsim.sh --traces ${TRACE_DIR} --executable ${BIN}/${EXE} \
-        --rundir ${RUNDIR}/${EXE} --user ${USER} > ${SCRIPT_OUTPUT}/${EXE}.condor
+        --rundir ${RUNDIR}/${RUN_NAME}/${EXE} --user ${USER} > ${SCRIPT_OUTPUT}/${EXE}.condor
 done

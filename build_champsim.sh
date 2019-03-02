@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-OPTIONS=$(getopt -o b:p:r:p:c:n:s:w: \
-    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways: -- "$@")
+OPTIONS=$(getopt -o b:p:r:p:c:n:s:w:x: \
+    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways:,compression-algo: -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 
@@ -16,6 +16,7 @@ NUM_CORE=1
 COMPILE_OPTIONS=
 BINARY_NAME=
 COMPRESSION="compressed"
+COMPRESSION_ALGO="bdi"
 TRACE_TYPE="new"
 LLC_SETS=2048
 LLC_WAYS=16
@@ -29,6 +30,7 @@ while true; do
         --cores) NUM_CORE=$2; shift 2;;
         --name) BINARY_NAME=$2; shift 2;;
         --compressed) COMPRESSION="compressed"; shift;;
+        --compression-algo) COMPRESSION_ALGO=$2; shift 2;;
         --uncompressed) COMPRESSION="uncompressed"; shift;;
         --new-trace) TRACE_TYPE="new"; shift;;
         --old-trace) TRACE_TYPE="old"; shift;;
@@ -111,6 +113,19 @@ if [ "${COMPRESSION}" = "compressed" ]; then
     COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSED_CACHE"
 fi
 
+# Check the compression algorithms.
+if [ "${COMPRESSION_ALGO}" = "bdi" ]; then
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSION_BDI"
+elif [ "${COMPRESSION_ALGO}" = "fpc" ]; then
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSION_FPC"
+elif [ "${COMPRESSION_ALGO}" = "cpack" ]; then
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSION_CPACK"
+elif [ "${COMPRESSION_ALGO}" = "none" ]; then
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSION_NONE"
+else
+    echo "${BOLD}Unrecognized compression algorithm '${COMPRESSION_ALGO}', quitting${NORMAL}"
+fi
+
 # Print out how many sets/ways to build for.
 echo "${BOLD}Building with ${LLC_SETS} sets / ${LLC_WAYS} ways...${NORMAL}"
 COMPILE_OPTIONS="${COMPILE_OPTIONS} -DLLC_SET_PERCORE=${LLC_SETS} -DLLC_WAY=${LLC_WAYS}"
@@ -128,8 +143,8 @@ cp replacement/${LLC_REPLACEMENT}.llc_repl replacement/llc_replacement.cc
 # Build
 mkdir -p bin
 rm -f bin/champsim
-make clean
-make ExternalCFlags="${COMPILE_OPTIONS}"
+make -s clean
+make -s ExternalCFlags="${COMPILE_OPTIONS}"
 
 # Sanity check
 echo ""

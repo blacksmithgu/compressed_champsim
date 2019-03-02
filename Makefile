@@ -49,7 +49,6 @@ $(binDir)/$(app): buildrepo $(objects)
 	@$(CC) $(objects) $(LDFlags) -o $@
 
 $(objDir)/%.o: %.$(srcExt)
-	@echo "Generating dependencies for $<..."
 	@$(call make-depend,$<,$@,$(subst .o,.d,$@))
 	@echo "Compiling $<..."
 	@$(CC) $(CFlags) $(ExternalCFlags) $< -o $@
