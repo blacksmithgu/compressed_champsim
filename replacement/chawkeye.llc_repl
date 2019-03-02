@@ -24,7 +24,7 @@
 
 // The predictor to use when making cache friendly/averse predictions.
 #ifndef PREDICTOR
-    #define PREDICTOR PCAndCompressionPredictor
+    #define PREDICTOR PCPredictor
 #endif
 
 // The RRPV policy to use to compute an overall RRPV score for a cache way, given multiple RRPV scores for each subblock

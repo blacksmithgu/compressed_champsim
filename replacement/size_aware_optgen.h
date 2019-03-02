@@ -147,7 +147,7 @@ template<size_t capacity> struct OPTgen : public CacheGen {
      * Return true if the line would be cached, and false otherwise. Note both start and end quanta are inclusive.
      */
     virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) const override {
-        if(!liveness.before_start(start_quanta)) return false;
+        if(liveness.before_start(start_quanta)) return false;
         if(liveness.after_end(start_quanta)) return true;
 
         // Start quanta is in bounds, check if all entries are < max cache size.
@@ -280,7 +280,7 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
      * Return true if the line would be cached, and false otherwise. Note both start and end quanta are inclusive.
      */
     virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) const override {
-        if(!liveness.before_start(start_quanta)) return false;
+        if(liveness.before_start(start_quanta)) return false;
         if(liveness.after_end(start_quanta)) return true;
 
         // Start quanta is in bounds, check if this usage interval fits at every quanta.

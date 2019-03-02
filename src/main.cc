@@ -24,6 +24,8 @@ string accessHistoryFile;
 unsigned obol_cost_ratio = 4;
 unsigned obol_cost_threshold = 160;
 
+double benchmark_compression_ratio = 1.0;
+
 // PAGE TABLE
 uint32_t PAGE_TABLE_LATENCY = 0, SWAP_LATENCY = 0;
 queue <uint64_t > page_queue;
@@ -489,6 +491,7 @@ int main(int argc, char** argv)
             {"cost_ratio", required_argument, 0, 'r'},
             {"cost_threshold", required_argument, 0, 'm'},
             {"ped_coefficient", required_argument, 0, 'p'},
+            {"compression_ratio", required_argument, 0, 'x'},
             {0, 0, 0, 0}      
         };
 
@@ -536,6 +539,9 @@ int main(int argc, char** argv)
                 break;
             case 'p':
                 ped_coefficient = atol(optarg);
+                break;
+            case 'x':
+                benchmark_compression_ratio = atof(optarg);
                 break;
             default:
                 abort();
