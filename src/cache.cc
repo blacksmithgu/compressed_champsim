@@ -1014,7 +1014,7 @@ uint64_t CACHE::get_compression_factor(char* data) {
 #elif defined(COMPRESSION_FPC)
     unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 2);
 #elif defined(COMPRESSION_NONE)
-    unsigned int CF = 64;
+    unsigned int CF = 1;
 #else
     // Default compression scheme is BDI.
     unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 1);

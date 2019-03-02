@@ -77,7 +77,7 @@ int compress(const uint8_t input[64], uint8_t output[68]) {
 		dict_size += 1;
 	}
 
-	return out_idx;
+	return (out_idx % 8 == 0 ? out_idx / 8 : out_idx / 8 + 1);
 }
 
 void set_bit(uint8_t* output, int& idx, bool a, bool b)
