@@ -1,0 +1,218 @@
+#include "cache.h"
+#include "compression_tracker.h"
+
+#include <iomanip>
+#include <stdint.h>
+#include <random>
+#include <unordered_set>
+
+// The total number of accesses to the cache as a whole.
+uint64_t num_accesses = 0;
+
+// Tracker used for printing out compressibility stats.
+CompressionTracker compression_tracker;
+
+// The maximum value RRPV can reach in the cache.
+#define RRPV_MAX_VALUE (MAX_COMPRESSIBILITY * LLC_WAY - 1)
+// Number of policies to choose from. There are two: BRRIP and SRRIP
+#define NUM_POLICY 2
+
+// Set dueling monitors. Dedicates a few sets to this policy.
+#define SDM_SIZE 32
+#define TOTAL_SDM_SETS NUM_CPUS*NUM_POLICY*SDM_SIZE
+#define BIP_MAX 32
+
+// Policy selection - chooses between BRRIP (Basically equivalent to BIP) and SRRIP
+#define PSEL_WIDTH 10
+#define PSEL_MAX ((1<<PSEL_WIDTH)-1)
+#define PSEL_THRS PSEL_MAX/2
+
+// the randomly-selected sampler sets to do tracking on
+std::unordered_set<uint32_t> rand_sets;
+
+// RRIP values
+std::array<std::array<uint32_t, LLC_WAY>LLC_SET> rrpv;
+
+// Counter for the BIP policy
+uint32_t bip_counter = 0;
+
+// Policy selection counter. Determines which policy the follower sets follow.
+// Automatically zero-initialized.
+std::array<uint32_t, NUM_CPUS> psel;
+
+// taken directly from the RRIP code
+int is_it_leader(uint32_t cpu, uint32_t set) {
+    uint32_t start = cpu * NUM_POLICY * SDM_SIZE,
+             end = start + NUM_POLICY * SDM_SIZE;
+
+    for (uint32_t i=start; i<end; i++)
+        if (rand_sets[i] == set)
+            return ((i - start) / SDM_SIZE);
+
+    return -1;
+}
+
+/**
+ * Called to initialize the LLC replacement policy state.
+ */
+void CACHE::llc_initialize_replacement() {
+    // I don't know why this value was chosen but it's in the original RRIP code
+    constexpr uint64_t max_random_value = 1048576;
+
+    // generate the set dueling monitors
+    // We would like to reproduce this result, so we're going to seed mt with 1
+    //std::random_device rd;
+    std::mt19937_64 gen; // seeds with default seed
+    std::uniform_int_distribution<> distribution(0, max_random_value);
+    std::unordered_set<uint32_t> lead_sets;
+    for (int i = 0; i < TOTAL_SDM_SETS; i++) {
+        uint32_t lead;
+        while(lead_sets.find(lead = distribution()) != lead_sets.end());
+        lead_sets.insert(lead);
+    }
+
+    // initialize RRIP values
+    for (uint32_t i = 0; i < LLC_SET; i++) for (uint32_t j = 0; j < LLC_WAY; j++) rrpv[i][j] = RRPV_MAX_VALUE;
+}
+
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
+    uint64_t full_addr, uint32_t type) {
+    std::cerr << "Normal find victim also called..." << std::endl;
+
+    // An assert() is legitimate here instead of an exit(), because this should never happen.
+    assert(0);
+    return 0;
+}
+
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip,
+    uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    std::cout << "Normal Update replacement state called..." << std::endl;
+
+    // Assert is valid here as this should never happen.
+    assert(0);
+}
+
+void CACHE::llc_replacement_final_stats() {
+    std::cout << std::endl << std::endl;
+    std::cout << "Total Accesses: " << num_accesses << std::endl;
+    std::cout << "Average Utilization (0% - 400%): " << std::fixed << std::setprecision(5) << (utilization * 100.0) << "%" << std::endl;
+    std::cout << std::endl;
+    compression_tracker.print();
+}
+
+uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
+        uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
+    // 1st Variant: Look for empty/invalid space in a superblock line.
+    // If this succeeds, # of total cache lines stored does not change.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Ignore lines w/ a different superblock.
+        if(current_set[way].sbTag != get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)) continue;
+
+        // Ignore lines of a different compression factor.
+        if(current_set[way].compressionFactor != incoming_cf) continue;
+
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            // Ignore valid lines.
+            if(current_set[way].valid[compression_index]) continue;
+
+            // We've found an invalid line, return it.
+            evicted_compressed_index = compression_index;
+            return way;
+        }
+    }
+
+    // 2nd Variant: Look for a plain invalid way.
+    // Number of total cache lines increases by one.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Valid ways have CF > 0.
+        if(current_set[way].compressionFactor != 0) continue;
+
+        // Otherwise, we found a line.
+        evicted_compressed_index = 4;
+        return way;
+    }
+
+    //Step 3: Evict a superblock using RRIP.
+    uint32_t victim = 0;
+    bool found = false;
+    while (true) {
+        for (uint32_t way = 0; way < NUM_WAY; way++) {
+
+            if (rrpv[set][way] > RRPV_MAX_VALUE) {
+                victim = way;
+                found = true;
+            }
+        }
+        if (found) break;
+        // age
+        for (uint32_t way = 0; way < NUM_WAY; way++) {
+            rrpv[set][way]++;
+        }
+    }
+
+    evicted_compressed_index = 4;
+    return victim;
+}
+
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr, uint64_t ip,
+        uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    // Writeback hit does not update LRU state
+    if (type == WRITEBACK){
+        rrpv[set][way] = RRPV_MAX_VALUE - 1;
+        return;
+    }
+
+    if (hit) {
+        rrpv[set][way] = 0;
+        return;
+    }
+
+    // Sum the total size of the cache & increment number of accesses.
+    num_accesses++;
+
+    // Add this line to the # of compressible lines.
+    compression_tracker.increment(cf);
+
+    // Miss. Train leader behavior.
+    switch is_it_leader(cpu, set) {
+        // follower set, check what policy PSEL says to be and follow
+        case -1:
+            if(psel[cpu] > PSEL_THRS) {
+                // BRRIP
+                rrpv[set][way] = maxRRPV;
+                bip_counter ++;
+                if (bip_counter == BIP_MAX) bip_counter = 0;
+                if (bip_counter == 0) rrpv[set][way] = maxRRPV - 1;
+            } else {
+                // SRRIP
+                rrpv[set][way] = maxRRPV - 1;
+            }
+            break;
+        // Leader set that's BIP-fixed
+        case 0:
+            if (PSEL[cpu] > 0) PSEL[cpu]--;
+            rrpv[set][way] = maxRRPV;
+            bip_counter++;
+            if (bip_counter == BIP_MAX) bip_counter = 0;
+            if (bip_counter == 0) rrpv[set][way] = maxRRPV - 1;
+            break;
+        // Leader set that's SRRIP-fixed
+        case 1:
+            if (PSEL[cpu] > 0) PSEL[cpu]--;
+            rrpv[set][way] = maxRRPV - 1;
+            break;
+        default:
+            assert(0);
+    }
+
+    for (uint32_t i=0; i<NUM_WAY; i++) {
+        // Skip invalid lines.
+        if(compressed_cache_block[set][i].compressionFactor == 0) continue;
+
+        // Age all lines younger than the accessed line.
+        if (compressed_cache_block[set][i].lru < compressed_cache_block[set][way].lru)
+            compressed_cache_block[set][i].lru++;
+    }
+
+    compressed_cache_block[set][way].lru = 0; // promote to the MRU position
+}
