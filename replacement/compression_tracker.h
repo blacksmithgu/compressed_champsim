@@ -29,12 +29,14 @@ public:
         double ratio4 = count(4) / double(total_lines);
         double ratio2 = count(2) / double(total_lines);
         double ratio1 = count(1) / double(total_lines);
-        double overall_comp = total_lines / (count(4) * 0.25 + count(2) * 0.5 + count(1));
+        double bench_comp = total_lines / (count(4) * 0.25 + count(2) * 0.5 + count(1));
+        double line_comp = (4 * count(4) + 2 * count(2) + count(1)) / double(total_lines);
 
         printf("Compressible 4: %ld (%.2f%%)\n", count(4), ratio4 * 100.0);
         printf("Compressible 2: %ld (%.2f%%)\n", count(2), ratio2 * 100.0);
         printf("Compressible 1: %ld (%.2f%%)\n", count(1), ratio1 * 100.0);
-        printf("Overall Compressibility: %.2f", overall_comp);
+        printf("Benchmark Compression Ratio: %.2f\n", bench_comp);
+        printf("Average Line Compressibility: %.2f\n", line_comp);
     }
 };
 

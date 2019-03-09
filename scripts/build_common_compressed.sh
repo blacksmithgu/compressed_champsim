@@ -10,3 +10,4 @@ ${SCRIPT_DIR}/../build_champsim.sh --uncompressed --policy lru --name lru
 ${SCRIPT_DIR}/../build_champsim.sh --policy clru --name clru
 ${SCRIPT_DIR}/../build_champsim.sh --policy chawkeye --name chawkeye_optgen -- -DCACHEGEN="OPTgen\<1024\>"
 ${SCRIPT_DIR}/../build_champsim.sh --policy chawkeye --name chawkeye_yaccgen -- -DCACHEGEN="YACCgen\<1024\>"
+${SCRIPT_DIR}/../build_champsim.sh --policy chawkeye --name chawkeye_coptgen -- -DCACHEGEN="UnboundedSizeAwareOPTgen"
