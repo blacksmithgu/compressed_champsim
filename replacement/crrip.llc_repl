@@ -1,78 +1,96 @@
 #include "cache.h"
 #include "compression_tracker.h"
+#include "counter.h"
 
 #include <iomanip>
 #include <stdint.h>
 #include <random>
 #include <unordered_set>
 
-// The total number of accesses to the cache as a whole.
-uint64_t num_accesses = 0;
-
 // Tracker used for printing out compressibility stats.
 CompressionTracker compression_tracker;
 
 // The maximum value RRPV can reach in the cache.
-#define RRPV_MAX_VALUE (MAX_COMPRESSIBILITY * LLC_WAY - 1)
-// Number of policies to choose from. There are two: BRRIP and SRRIP
-#define NUM_POLICY 2
+#define RRPV_MAX_VALUE (LLC_WAY - 1)
 
-// Set dueling monitors. Dedicates a few sets to this policy.
-#define SDM_SIZE 32
-#define TOTAL_SDM_SETS NUM_CPUS*NUM_POLICY*SDM_SIZE
-#define BIP_MAX 32
+// Number of sets dedicated to a certain policy for set dueling purposes.
+#define NUM_LEADER_SETS 32
 
-// Policy selection - chooses between BRRIP (Basically equivalent to BIP) and SRRIP
+// BIP keeps an internal, global counter which is incremented on every BIP-cache access;
+// BIP does not change RRPV of lines unless the counter equals this interval (after which the
+// counter is reset to 0). Thus, BIP only changes a line's RRPV every BIP_INTERVAL accesses.
+#define BIP_INTERVAL 32
+
+// Defines the PSEL global performance counter; a low PSEL (0 - PSEL_THRESHOLD - 1) corresponds to SRRIP currently
+// performing better, while a high PSEL (PSEL_THRESHOLD - PSEL_MAX) corresponds to BIP currently performing better.
+// There is usually one counter per CPU.
 #define PSEL_WIDTH 10
 #define PSEL_MAX ((1<<PSEL_WIDTH)-1)
-#define PSEL_THRS PSEL_MAX/2
+#define PSEL_THRESHOLD PSEL_MAX/2
 
-// the randomly-selected sampler sets to do tracking on
-std::unordered_set<uint32_t> rand_sets;
+struct CPUInfo {
+    // PSEL counter, used for checking which policy performs better for this specific CPU.
+    // Low values = SRRIP, High values = BIP.
+    Counter<PSEL_MAX> psel;
 
-// RRIP values
-std::array<std::array<uint32_t, LLC_WAY>LLC_SET> rrpv;
+    // Sets of leaders for SRRIP/BIP (i.e., the sets which are fixed on a policy for set dueling).
+    std::unordered_set<uint32_t> srrip_leaders;
+    std::unordered_set<uint32_t> bip_leaders;
 
-// Counter for the BIP policy
+    CPUInfo() : psel(), srrip_leaders(), bip_leaders() {}
+    CPUInfo(std::unordered_set<uint32_t> srrip, std::unordered_set<uint32_t> bip)
+        : psel(PSEL_THRESHOLD), srrip_leaders(std::move(srrip)), bip_leaders(std::move(bip)) {}
+
+    // Simple convienence methods which check if a set is a leader.
+    bool is_srrip_leader(uint32_t set) { return srrip_leaders.find(set) != srrip_leaders.end(); }
+    bool is_bip_leader(uint32_t set) { return bip_leaders.find(set) != bip_leaders.end(); }
+};
+
+// RRIP values; global for the cache.
+std::array<std::array<uint32_t, LLC_WAY>, LLC_SET> rrpv;
+
+// Global counter for the BIP policy; see BIP_INTERVAL.
 uint32_t bip_counter = 0;
 
-// Policy selection counter. Determines which policy the follower sets follow.
-// Automatically zero-initialized.
-std::array<uint32_t, NUM_CPUS> psel;
-
-// taken directly from the RRIP code
-int is_it_leader(uint32_t cpu, uint32_t set) {
-    uint32_t start = cpu * NUM_POLICY * SDM_SIZE,
-             end = start + NUM_POLICY * SDM_SIZE;
-
-    for (uint32_t i=start; i<end; i++)
-        if (rand_sets[i] == set)
-            return ((i - start) / SDM_SIZE);
-
-    return -1;
-}
+// Per-CPU metadata; tracks leader sets and PSEL counter.
+std::array<CPUInfo, NUM_CPUS> cpu_info;
 
 /**
  * Called to initialize the LLC replacement policy state.
  */
 void CACHE::llc_initialize_replacement() {
-    // I don't know why this value was chosen but it's in the original RRIP code
-    constexpr uint64_t max_random_value = 1048576;
+    // Randomly generate leader sets; these should be unique across all CPUs/all policies.
+    std::unordered_set<uint32_t> all_lead_sets;
+    std::mt19937_64 gen;
+    std::uniform_int_distribution<> distribution(0, NUM_SET);
 
-    // generate the set dueling monitors
-    // We would like to reproduce this result, so we're going to seed mt with 1
-    //std::random_device rd;
-    std::mt19937_64 gen; // seeds with default seed
-    std::uniform_int_distribution<> distribution(0, max_random_value);
-    std::unordered_set<uint32_t> lead_sets;
-    for (int i = 0; i < TOTAL_SDM_SETS; i++) {
+    for(int cpu = 0; cpu < NUM_CPUS; cpu++) {
+        std::unordered_set<uint32_t> srrip_sets, bip_sets;
         uint32_t lead;
-        while(lead_sets.find(lead = distribution()) != lead_sets.end());
-        lead_sets.insert(lead);
+
+        // TODO: A little messy/code-duplicated, but it's right next to each other so not the most evil.
+        // Generate leader sets for SRRIP first.
+        for(int set = 0; set < NUM_LEADER_SETS; set++) {
+            while(all_lead_sets.find(lead = distribution(gen)) != all_lead_sets.end());
+            all_lead_sets.insert(lead);
+            srrip_sets.insert(lead);
+        }
+
+        // Then leader sets for BIP.
+        for(int set = 0; set < NUM_LEADER_SETS; set++) {
+            while(all_lead_sets.find(lead = distribution(gen)) != all_lead_sets.end());
+            all_lead_sets.insert(lead);
+            bip_sets.insert(lead);
+        }
+
+        // Initialize actual CPU info.
+        cpu_info[cpu] = CPUInfo(std::move(srrip_sets), std::move(bip_sets));
     }
 
-    // initialize RRIP values
-    for (uint32_t i = 0; i < LLC_SET; i++) for (uint32_t j = 0; j < LLC_WAY; j++) rrpv[i][j] = RRPV_MAX_VALUE;
+    // Initialize RRPV values.
+    for(uint32_t i = 0; i < LLC_SET; i++)
+        for(uint32_t j = 0; j < LLC_WAY; j++)
+            rrpv[i][j] = RRPV_MAX_VALUE;
 }
 
 uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
@@ -93,17 +111,12 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 }
 
 void CACHE::llc_replacement_final_stats() {
-    std::cout << std::endl << std::endl;
-    std::cout << "Total Accesses: " << num_accesses << std::endl;
-    std::cout << "Average Utilization (0% - 400%): " << std::fixed << std::setprecision(5) << (utilization * 100.0) << "%" << std::endl;
-    std::cout << std::endl;
     compression_tracker.print();
 }
 
 uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
         uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
     // 1st Variant: Look for empty/invalid space in a superblock line.
-    // If this succeeds, # of total cache lines stored does not change.
     for(uint32_t way = 0; way < LLC_WAY; way++) {
         // Ignore lines w/ a different superblock.
         if(current_set[way].sbTag != get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)) continue;
@@ -122,7 +135,6 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
     }
 
     // 2nd Variant: Look for a plain invalid way.
-    // Number of total cache lines increases by one.
     for(uint32_t way = 0; way < LLC_WAY; way++) {
         // Valid ways have CF > 0.
         if(current_set[way].compressionFactor != 0) continue;
@@ -132,87 +144,53 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         return way;
     }
 
-    //Step 3: Evict a superblock using RRIP.
+    // Final Variant: Evict a superblock using RRIP; if no lines are max RRPV value, age until one is.
+    // Start by finding max-age line.
     uint32_t victim = 0;
-    bool found = false;
-    while (true) {
-        for (uint32_t way = 0; way < NUM_WAY; way++) {
+    for(uint32_t way = 1; way < LLC_WAY; way++) {
+        if(rrpv[set][way] > rrpv[set][victim]) victim = way;
+    }
 
-            if (rrpv[set][way] > RRPV_MAX_VALUE) {
-                victim = way;
-                found = true;
-            }
-        }
-        if (found) break;
-        // age
-        for (uint32_t way = 0; way < NUM_WAY; way++) {
-            rrpv[set][way]++;
-        }
+    // Age lines if victim age is not MAX_RRPV.
+    if(rrpv[set][victim] < RRPV_MAX_VALUE) {
+        uint32_t age_amount = (RRPV_MAX_VALUE - rrpv[set][victim]);
+        for(uint32_t way = 0; way < LLC_WAY; way++)
+            rrpv[set][way] += age_amount;
     }
 
     evicted_compressed_index = 4;
     return victim;
 }
 
-void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr, uint64_t ip,
-        uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
-    // Writeback hit does not update LRU state
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr,
+        uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    // Do not update replacement state for cache writebacks.
     if (type == WRITEBACK){
         rrpv[set][way] = RRPV_MAX_VALUE - 1;
         return;
     }
 
+    // Track compressibility of lines.
+    compression_tracker.increment(cf);
+
+    // CACHE HIT: Hits always result in putting hit line in MRU position.
     if (hit) {
         rrpv[set][way] = 0;
         return;
     }
 
-    // Sum the total size of the cache & increment number of accesses.
-    num_accesses++;
+    // CACHE MISS: apply either SRRIP or BIP as is appropriate.
+    CPUInfo& cinfo = cpu_info[cpu];
+    if(cinfo.is_srrip_leader(set) || cinfo.psel.value() < PSEL_THRESHOLD) {
+        rrpv[set][way] = RRPV_MAX_VALUE - 1;
+    } else {
+        bip_counter = (bip_counter + 1) % BIP_INTERVAL;
 
-    // Add this line to the # of compressible lines.
-    compression_tracker.increment(cf);
-
-    // Miss. Train leader behavior.
-    switch is_it_leader(cpu, set) {
-        // follower set, check what policy PSEL says to be and follow
-        case -1:
-            if(psel[cpu] > PSEL_THRS) {
-                // BRRIP
-                rrpv[set][way] = maxRRPV;
-                bip_counter ++;
-                if (bip_counter == BIP_MAX) bip_counter = 0;
-                if (bip_counter == 0) rrpv[set][way] = maxRRPV - 1;
-            } else {
-                // SRRIP
-                rrpv[set][way] = maxRRPV - 1;
-            }
-            break;
-        // Leader set that's BIP-fixed
-        case 0:
-            if (PSEL[cpu] > 0) PSEL[cpu]--;
-            rrpv[set][way] = maxRRPV;
-            bip_counter++;
-            if (bip_counter == BIP_MAX) bip_counter = 0;
-            if (bip_counter == 0) rrpv[set][way] = maxRRPV - 1;
-            break;
-        // Leader set that's SRRIP-fixed
-        case 1:
-            if (PSEL[cpu] > 0) PSEL[cpu]--;
-            rrpv[set][way] = maxRRPV - 1;
-            break;
-        default:
-            assert(0);
+        if(bip_counter == 0) rrpv[set][way] = RRPV_MAX_VALUE - 1;
+        else rrpv[set][way] = RRPV_MAX_VALUE;
     }
 
-    for (uint32_t i=0; i<NUM_WAY; i++) {
-        // Skip invalid lines.
-        if(compressed_cache_block[set][i].compressionFactor == 0) continue;
-
-        // Age all lines younger than the accessed line.
-        if (compressed_cache_block[set][i].lru < compressed_cache_block[set][way].lru)
-            compressed_cache_block[set][i].lru++;
-    }
-
-    compressed_cache_block[set][way].lru = 0; // promote to the MRU position
+    // If this is a leader set, move the PSEL counter away from the policy (because we missed).
+    if(cinfo.is_srrip_leader(set)) cinfo.psel.increment();
+    else if(cinfo.is_bip_leader(set)) cinfo.psel.decrement();
 }
