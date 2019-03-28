@@ -41,14 +41,15 @@ void CACHE::handle_fill()
 
 #ifdef COMPRESSED_CACHE
         uint32_t evicted_cf = 0;
-        uint32_t compression_factor = get_compression_factor(MSHR.entry[mshr_index].program_data);
+        uint32_t compressed_size = get_compressed_size(MSHR.entry[mshr_index].program_data);
+        uint32_t compression_factor = get_compression_factor(compressed_size);
 #endif
 
         if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
             if(is_compressed) {
                 set = get_set_cc(MSHR.entry[mshr_index].address);
-                way = llc_find_victim_cc(fill_cpu, MSHR.entry[mshr_index].instr_id, set, compressed_cache_block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type, compression_factor, evicted_cf);
+                way = llc_find_victim_cc(fill_cpu, MSHR.entry[mshr_index].instr_id, set, compressed_cache_block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type, compression_factor, compressed_size, evicted_cf);
             } else
 #endif
                 way = llc_find_victim(fill_cpu, MSHR.entry[mshr_index].instr_id, set, block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type);
@@ -63,7 +64,7 @@ void CACHE::handle_fill()
             if (cache_type == IS_LLC) {
 #ifdef COMPRESSED_CACHE
                 if(is_compressed)
-                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, compression_factor, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
+                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, compression_factor, compressed_size, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
                 else
 #endif
                     llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
@@ -164,7 +165,7 @@ void CACHE::handle_fill()
 #ifdef COMPRESSED_CACHE
                 // TODO: full_addr[evicted_cf] may be non-sensical.
                 if(is_compressed)
-                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], MSHR.entry[mshr_index].type, compression_factor, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
+                    llc_update_replacement_state_cc(fill_cpu, set, way, evicted_cf, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], MSHR.entry[mshr_index].type, compression_factor, compressed_size, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
                 else
 #endif
                 llc_update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, block[set][way].full_addr, MSHR.entry[mshr_index].type, 0, MSHR.entry[mshr_index].latency, MSHR.entry[mshr_index].effective_latency);
@@ -251,7 +252,8 @@ void CACHE::handle_writeback()
         int way = check_hit(&WQ.entry[index]);
         bool force_victim = false;
 #ifdef COMPRESSED_CACHE
-        uint32_t compression_factor = get_compression_factor(WQ.entry[index].program_data);
+        uint32_t compressed_size = get_compressed_size(WQ.entry[index].program_data);
+        uint32_t compression_factor = get_compression_factor(compressed_size);
         uint32_t myCF = 0;
 
         if(is_compressed)
@@ -289,7 +291,7 @@ void CACHE::handle_writeback()
                                     //It's a writeback hit but it can force an eviction, so we made this a WB miss.
                                     assert(0);
                                 }
-                                llc_update_replacement_state_cc(writeback_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], WQ.entry[index].ip, 0, WQ.entry[index].type, compression_factor, 1, 0, 0);
+                                llc_update_replacement_state_cc(writeback_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], WQ.entry[index].ip, 0, WQ.entry[index].type, compression_factor, compressed_size, 1, 0, 0);
 
                             }
                         }
@@ -417,7 +419,7 @@ void CACHE::handle_writeback()
                     if(is_compressed)
                     {
                         set = get_set_cc(WQ.entry[index].address);
-                        way = llc_find_victim_cc(writeback_cpu, WQ.entry[index].instr_id, set, compressed_cache_block[set], WQ.entry[index].ip, WQ.entry[index].full_addr, WQ.entry[index].type, compression_factor, evicted_cf);
+                        way = llc_find_victim_cc(writeback_cpu, WQ.entry[index].instr_id, set, compressed_cache_block[set], WQ.entry[index].ip, WQ.entry[index].full_addr, WQ.entry[index].type, compression_factor, compressed_size, evicted_cf);
                     }
                     else
 #endif
@@ -500,7 +502,7 @@ void CACHE::handle_writeback()
 #ifdef COMPRESSED_CACHE
                     // TODO: full_addr[evicted_cf] may be nonsensical.
                     if(is_compressed)
-                        llc_update_replacement_state_cc(writeback_cpu, set, way, evicted_cf, WQ.entry[index].full_addr, WQ.entry[index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], WQ.entry[index].type, compression_factor, 0, 0, 0);
+                        llc_update_replacement_state_cc(writeback_cpu, set, way, evicted_cf, WQ.entry[index].full_addr, WQ.entry[index].ip, compressed_cache_block[set][way].full_addr[evicted_cf], WQ.entry[index].type, compression_factor, compressed_size, 0, 0, 0);
                     else
 #endif
 
@@ -615,7 +617,7 @@ void CACHE::handle_read()
                             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
                                 found = true;
                                 //Compression factor should not change because this is a read
-                                llc_update_replacement_state_cc(read_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], RQ.entry[index].ip, 0, RQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, 1, 0, 0);
+                                llc_update_replacement_state_cc(read_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], RQ.entry[index].ip, 0, RQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, compressed_cache_block[set][way].compressed_size[cf], 1, 0, 0);
                                 
                             }
                         }
@@ -840,7 +842,7 @@ void CACHE::handle_prefetch()
                         for (uint32_t cf = 0; cf < compressed_cache_block[set][way].compressionFactor; cf++) {
                             if ((compressed_cache_block[set][way].valid[cf] == 1) && (compressed_cache_block[set][way].blkId[cf] == myBlkId)) {
                                 found = true;
-                                llc_update_replacement_state_cc(prefetch_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], PQ.entry[index].ip, 0, PQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, 1, 0, 0);
+                                llc_update_replacement_state_cc(prefetch_cpu, set, way, cf, compressed_cache_block[set][way].full_addr[cf], PQ.entry[index].ip, 0, PQ.entry[index].type, compressed_cache_block[set][way].compressionFactor, compressed_cache_block[set][way].compressed_size[cf], 1, 0, 0);
                                 
                             }
                         }
@@ -1005,26 +1007,28 @@ uint64_t CACHE::get_sb_tag(uint64_t address)
     return (address >> (lg2(MAX_COMPRESSIBILITY)+lg2(NUM_SET)));
 }
 
-uint64_t CACHE::get_compression_factor(char* data) {
+uint32_t CACHE::get_compressed_size(const char* data) {
     // TODO: Using ifdef is as awful as it ever was; this would optimally be a command line argument, but ChampSim is
-    // unfortunately built around compiler flags instead of command line-args.
+    // unfortunately built around compiler flags instead of command line-args, so instead we get this wonderful thing.
 #if defined(COMPRESSION_CPACK)
     uint8_t dummy_buffer[68];
-    unsigned int CF = 64 / cpack::compress((uint8_t*) data, dummy_buffer);
+    return std::min(64, cpack::compress((uint8_t*) data, dummy_buffer));
 #elif defined(COMPRESSION_FPC)
-    unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 2);
+    return bdi::GeneralCompress(data, 64, 2);
 #elif defined(COMPRESSION_NONE)
-    unsigned int CF = 1;
+    return 64;
 #else
     // Default compression scheme is BDI.
-    unsigned int CF = 64 / bdi::GeneralCompress(data, 64, 1);
+    return bdi::GeneralCompress(data, 64, 1);
 #endif
+}
 
-    if(CF > 4) CF = 4;
-    else if(CF > 2) CF = 2;
-    else if(CF <= 0) CF = 1;
+uint64_t CACHE::get_compression_factor(uint32_t compressed_size) {
+    uint64_t CF = 64 / std::max((uint32_t) 1, compressed_size);
 
-    return CF;
+    if(CF >= 4) return 4;
+    else if(CF >= 2 && CF < 4) return 2;
+    else return 1;
 }
 
 #endif
@@ -1170,8 +1174,10 @@ void CACHE::fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packe
         pf_fill++;
 
     // Set the identifying information - tag, compression factor, and block ID.
+    uint32_t compressed_size = get_compressed_size(packet->program_data);
     compressed_cache_block[set][way].sbTag = get_sb_tag(packet->address);
-    compressed_cache_block[set][way].compressionFactor = get_compression_factor(packet->program_data);
+    compressed_cache_block[set][way].compressed_size[cf] = get_compressed_size(packet->program_data);
+    compressed_cache_block[set][way].compressionFactor = get_compression_factor(compressed_size);
     compressed_cache_block[set][way].blkId[cf] = get_blkid_cc(packet->address);
 
     compressed_cache_block[set][way].delta = packet->delta;

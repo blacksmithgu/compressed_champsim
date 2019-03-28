@@ -75,6 +75,7 @@ class COMPRESSED_CACHE_BLOCK {
         confidence;
 
     uint32_t blkId[4];
+    uint32_t compressed_size[4];
     uint64_t compressionFactor;
     uint64_t sbTag;
 
@@ -103,6 +104,7 @@ class COMPRESSED_CACHE_BLOCK {
             instr_id[i] = 0;
 
             blkId[i] = 4;
+            compressed_size[i] = 0;
         }
 
         delta = 0;

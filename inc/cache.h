@@ -251,14 +251,16 @@ class CACHE : public MEMORY {
     uint32_t get_set_cc(uint64_t line_address);
     uint32_t get_blkid_cc(uint64_t line_address);
     uint64_t get_sb_tag(uint64_t line_address);
-    uint64_t get_compression_factor(char* data);
+
+    uint32_t get_compressed_size(const char* data);
+    uint64_t get_compression_factor(uint32_t compressed_size);
 
     void fill_cache_cc(uint32_t set, uint32_t way, uint32_t cf, PACKET *packet);
     uint8_t evict_compressed_line(uint32_t set, uint32_t way, PACKET pkt, uint32_t& evicted_cf);
 
     // Implemented by external replacement policies.
-    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compression_index, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint8_t hit, uint64_t latency, uint64_t effective_latency);
-    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint32_t& evicted_compressed_index);
+    void llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compression_index, uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint32_t compressed_size, uint8_t hit, uint64_t latency, uint64_t effective_latency);
+    uint32_t llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set, uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint64_t incoming_compressed_size, uint32_t& evicted_compressed_index);
 #endif
 
     bool is_fake_hit(uint64_t) { return false; }

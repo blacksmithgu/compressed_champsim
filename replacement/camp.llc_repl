@@ -1,0 +1,179 @@
+// Re-implementation of the CAMP replacement policy, running on the YACC cache architecture.
+// Uses MVE ((max_rrpv + 1 - rrpv_value) / (block_compression_factor)) to compute the 'value'
+// of each block, evicting the block (or superblock) with lowest total value.
+//
+// Uses Size-aware Insertion Policy (SIP) to conditionally give priority to some block sizes (where block sizes are
+// grouped into 8 groups: 1-8B, 9-16B, etc.). Determines if a block size is valuable using Auxiliary Tag Arrays: 32 sets
+// are chosen (per block size) to have an Auxiliary Tag Array in addition to it's normal tag array. Accesses to that set
+// are forwarded to both tag arrays; the block size is prioritized in the Auxiliary Tag Array and is not in the normal
+// tag array. If the ATA misses fewer times, then that block size is prioritized.
+#include "cache.h"
+#include "compression_tracker.h"
+#include "counter.h"
+
+#include <iomanip>
+#include <memory>
+#include <random>
+#include <stdint.h>
+#include <unordered_set>
+
+// Tracker used for printing out compressibility stats.
+CompressionTracker compression_tracker;
+
+// The maximum value RRPV can reach in the cache.
+#define RRPV_MAX_VALUE (LLC_WAY - 1)
+
+// Number of global cache accesses between each policy update (when the auxiliary tag arrays are checked to see if
+// certain block sizes should be prioritized/deprioritized). When an interval ends, the policy is updated and counters
+// are reset.
+#define POLICY_UPDATE_INTERVAL 25000
+
+// Number of unique block sizes used by SIP.
+#define NUM_BLOCK_SIZES 8
+#define SETS_PER_BLOCK_SIZE 32
+
+// SIP Counter constants; there is one SIP counter per block size, which records whether it is beneficial to prioritize
+// a given block size.
+#define SIP_COUNTER_BITS 16
+#define SIP_COUNTER_MAX (1 << SIP_COUNTER_BITS)
+#define SIP_COUNTER_THRESHOLD (SIP_COUNTER_MAX/2)
+
+// Main Tag Array RRIP values; global for the cache.
+std::array<std::array<uint32_t, LLC_WAY>, LLC_SET> rrpv;
+
+// Map of set index -> auxiliary tag array.
+std::unordered_map<uint32_t, AuxiliaryTagArray> aux_tag_arrays;
+
+// The actual SIP-counters.
+std::array<Counter<SIP_COUNTER_MAX>, NUM_BLOCK_SIZES> sip_counters;
+
+// Abstraction for an auxiliary tag array; has it's own RRPV counters and tags,
+// as well as a specific block size which it prioritizes.
+struct AuxiliaryTagArray {
+    std::array<uint32_t, LLC_WAY> rrpv;
+    std::unique_ptr<COMPRESSED_CACHE_BLOCK> block;
+
+    // The 'index' of the prioritized size: 0 = 1-8b, 1 = 9-16b, and so on, up to 7 = 57-64b.
+    uint32_t prioritized_size_index;
+
+    // TODO: Implement constructor.
+    // TODO: Implement evict logic (take from cache.cc)
+    // TODO: Implement fill logic (take from cache.cc)
+};
+
+/**
+ * Called to initialize the LLC replacement policy state.
+ */
+void CACHE::llc_initialize_replacement() {
+    // Initialize RRPV values.
+    for(uint32_t i = 0; i < LLC_SET; i++)
+        for(uint32_t j = 0; j < LLC_WAY; j++)
+            rrpv[i][j] = RRPV_MAX_VALUE;
+}
+
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
+    uint64_t full_addr, uint32_t type) {
+    std::cerr << "Normal find victim also called..." << std::endl;
+
+    // An assert() is legitimate here instead of an exit(), because this should never happen.
+    assert(0);
+    return 0;
+}
+
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip,
+    uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    std::cout << "Normal Update replacement state called..." << std::endl;
+
+    // Assert is valid here as this should never happen.
+    assert(0);
+}
+
+void CACHE::llc_replacement_final_stats() {
+    compression_tracker.print();
+}
+
+uint32_t find_victim(COMPRESSED_CACHE_BLOCK* current_set, std::array<uint32_t, LLC_WAY>& rrpv,
+        uint64_t full_addr, uint64_t incoming_cf, uint32_t& evicted_compressed_index) {
+    // 1st Variant: Look for empty/invalid space in a superblock line.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Ignore lines w/ a different superblock.
+        if(current_set[way].sbTag != get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)) continue;
+
+        // Ignore lines of a different compression factor.
+        if(current_set[way].compressionFactor != incoming_cf) continue;
+
+        for(uint32_t compression_index = 0; compression_index < current_set[way].compressionFactor; compression_index++) {
+            // Ignore valid lines.
+            if(current_set[way].valid[compression_index]) continue;
+
+            // We've found an invalid line, return it.
+            evicted_compressed_index = compression_index;
+            return way;
+        }
+    }
+
+    // 2nd Variant: Look for a plain invalid way.
+    for(uint32_t way = 0; way < LLC_WAY; way++) {
+        // Valid ways have CF > 0.
+        if(current_set[way].compressionFactor != 0) continue;
+
+        // Otherwise, we found a line.
+        evicted_compressed_index = 4;
+        return way;
+    }
+
+    // Final Variant: Evict a superblock using RRIP; if no lines are max RRPV value, age until one is.
+    // Start by finding max-age line.
+    uint32_t victim = 0;
+    for(uint32_t way = 1; way < LLC_WAY; way++) {
+        if(rrpv[set][way] > rrpv[set][victim]) victim = way;
+    }
+
+    // Age lines if victim age is not MAX_RRPV.
+    if(rrpv[set][victim] < RRPV_MAX_VALUE) {
+        uint32_t age_amount = (RRPV_MAX_VALUE - rrpv[set][victim]);
+        for(uint32_t way = 0; way < LLC_WAY; way++)
+            rrpv[set][way] += age_amount;
+    }
+
+    evicted_compressed_index = 4;
+    return victim;
+
+}
+
+uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
+        uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint64_t incoming_size,
+        uint32_t& evicted_compressed_index) {
+    // TODO: If you bypass here, make sure access still reaches auxiliary tag array.
+    uint32_t way = find_victim(current_set, rrpv[set], full_addr, incoming_cf, evicted_compressed_index);
+    if(way >= LLC_WAY) {
+        std::cerr << "Bypassing not supported with this policy (since auxiliary tag array would miss access)." << std::endl;
+        assert(0);
+    }
+
+    return way;
+}
+
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr,
+        uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint32_t compressed_size, uint8_t hit,
+        uint64_t latency, uint64_t effective_latency) {
+    // Check if this set has an auxiliary tag array; if it does, then forward the victim request to that cache too.
+
+    // Do not update replacement state for cache writebacks.
+    if (type == WRITEBACK){
+        rrpv[set][way] = RRPV_MAX_VALUE - 1;
+        return;
+    }
+
+    // Track compressibility of lines.
+    compression_tracker.increment(cf);
+
+    // CACHE HIT: Hits always result in putting hit line in MRU position.
+    if (hit) {
+        rrpv[set][way] = 0;
+        return;
+    }
+
+    // CACHE MISS: apply SRRIP, set new line to "long" re-use interval.
+    rrpv[set][way] = RRPV_MAX_VALUE - 1;
+}
