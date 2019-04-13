@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-OPTIONS=$(getopt -o b:p:r:p:c:n:s:w:x: \
-    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways:,compression-algo: -- "$@")
+OPTIONS=$(getopt -o b:p:r:p:c:n:s:w:x:k: \
+    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways:,compression-algo:,superblock: -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 
@@ -17,6 +17,7 @@ COMPILE_OPTIONS=
 BINARY_NAME=
 COMPRESSION="compressed"
 COMPRESSION_ALGO="cpack"
+SUPERBLOCK="yes"
 TRACE_TYPE="new"
 LLC_SETS=2048
 LLC_WAYS=16
@@ -34,6 +35,7 @@ while true; do
         --uncompressed) COMPRESSION="uncompressed"; shift;;
         --new-trace) TRACE_TYPE="new"; shift;;
         --old-trace) TRACE_TYPE="old"; shift;;
+        --superblock) SUPERBLOCK=$2; shift 2;;
         --llc-sets) LLC_SETS=$2; shift 2;;
         --llc-ways) LLC_WAYS=$2; shift 2;;
         --) shift; break;;
@@ -111,6 +113,12 @@ fi
 if [ "${COMPRESSION}" = "compressed" ]; then
     echo "${BOLD}Building with compression enabled...${NORMAL}"
     COMPILE_OPTIONS="${COMPILE_OPTIONS} -DCOMPRESSED_CACHE"
+fi
+
+# Check for superblock on/off
+if [ "${SUPERBLOCK}" = "no" ]; then
+    echo "${BOLD}Building without superblocks (i.e., superblock = 0)${NORMAL}"
+    COMPILE_OPTIONS="${COMPILE_OPTIONS} -DNO_SUPERBLOCK"
 fi
 
 # Check the compression algorithms.

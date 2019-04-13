@@ -24,7 +24,7 @@
 
 // The predictor to use when making cache friendly/averse predictions.
 #ifndef PREDICTOR
-    #define PREDICTOR PCAndCompressionPredictor
+    #define PREDICTOR PCPredictor
 #endif
 
 // The RRPV policy to use to compute an overall RRPV score for a cache way, given multiple RRPV scores for each subblock
@@ -35,7 +35,7 @@
 
 // The cache model/generator to use; OPTgen by default.
 #ifndef CACHEGEN
-    #define CACHEGEN OPTgen<1024>
+    #define CACHEGEN YACCgen<1024>
 #endif
 
 using namespace std;
@@ -391,35 +391,47 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         }
     }
 
-    // 3rd Variant: The tricky one, where we choose an entire superblock to evict.
-    // This is where the actual replacement policy comes into play; we will use RRPV at the cache way level,
-    // evicting the superblock with the highest RRPV.
+    // 3rd Variant: We now have to evict either another line of the same size (and same superblock), or an entire
+    // superblock. We'll use RRIP for this.
     uint32_t max_rrpv = 0;
-    uint32_t victim = 0;
+    uint32_t victim_way = LLC_WAY, victim_cf = MAX_COMPRESSIBILITY;
     for(uint32_t way = 0; way < LLC_WAY; way++) {
-        // Compute the RRPV of the superblock according to the current strategy.
-        uint32_t superblock_rrpv = rrpv_strategy(current_set[way], rrpv[set][way]);
+        // If this way is the same superblock as the incoming line, then consider each of it's line individually as
+        // well.
+        if(current_set[way].sbTag == get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)
+                && current_set[way].compressionFactor == incoming_cf) {
+            for(uint32_t cf = 0; cf < current_set[way].compressionFactor; cf++) {
+                if(rrpv[set][way][cf] > max_rrpv) {
+                    max_rrpv = rrpv[set][way][cf];
+                    victim_way = way;
+                    victim_cf = cf;
+                }
+            }
+        } else {
+            // Compute the RRPV of the superblock according to the current strategy.
+            uint32_t superblock_rrpv = rrpv_strategy(current_set[way], rrpv[set][way]);
 
-        if(superblock_rrpv > max_rrpv) {
-            max_rrpv = superblock_rrpv;
-            victim = way;
+            if(superblock_rrpv > max_rrpv) {
+                max_rrpv = superblock_rrpv;
+                victim_way = way;
+                victim_cf = MAX_COMPRESSIBILITY;
+            }
         }
     }
 
-    // We're evicting full lines beyond this point, so set compressed index to >= MAX_COMPRESSIBILITY.
-    evicted_compressed_index = MAX_COMPRESSIBILITY;
+    // Go through each line that will be evicted; if it betrayed expectations, then detrain it.
+    if(victim_cf < MAX_COMPRESSIBILITY) {
+        if(accesses[set][victim_way][victim_cf].prediction)
+            predictor->detrain(accesses[set][victim_way][victim_cf]);
+    } else {
+        for(uint32_t cf = 0; cf < current_set[victim_way].compressionFactor; cf++) {
+            if(accesses[set][victim_way][cf].prediction)
+                predictor->detrain(accesses[set][victim_way][cf]);
+        }
+    }
 
-    // TODO: YACC Optimization - If the incoming line and the line we're evicting have the same superblock, see if they
-    // also have the same compressibility so that we only evict one cache line instead of the whole way.
-
-    // If we find a cache-averse line, we can throw it out immediately!
-    if(max_rrpv == RRPV_MAX_VALUE) return victim;
-
-    // Otherwise, detrain the cache-friendly line as it betrayed expectations and then throw it out.
-    for(uint32_t compression_index = 0; compression_index < current_set[victim].compressionFactor; compression_index++)
-        predictor->detrain(accesses[set][victim][compression_index]);
-
-    return victim;
+    evicted_compressed_index = victim_cf;
+    return victim_way;
 }
 
 // TODO: simulator should generate empty implementations of these if COMPRESSED_CACHE is defined.

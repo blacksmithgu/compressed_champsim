@@ -991,20 +991,29 @@ uint32_t CACHE::get_set(uint64_t address)
 #ifdef COMPRESSED_CACHE
 
 // Note: addresses passed to these methods already drop off the last 6 bits.
-uint32_t CACHE::get_set_cc(uint64_t address)
-{
+uint32_t CACHE::get_set_cc(uint64_t address) {
+#ifdef NO_SUPERBLOCK
+    return this->get_set(address);
+#else
     // Drop last 2 bits because they are included in block ID.
     return (uint32_t) ((address >> lg2(MAX_COMPRESSIBILITY)) & ((1 << lg2(NUM_SET)) - 1)); 
+#endif
 }
 
-uint32_t CACHE::get_blkid_cc(uint64_t address)
-{
+uint32_t CACHE::get_blkid_cc(uint64_t address) {
+#ifdef NO_SUPERBLOCK
+    return address;
+#else
     return (address % MAX_COMPRESSIBILITY);
+#endif
 }
 
-uint64_t CACHE::get_sb_tag(uint64_t address)
-{
+uint64_t CACHE::get_sb_tag(uint64_t address) {
+#ifdef NO_SUPERBLOCK
+    return 0;
+#else
     return (address >> (lg2(MAX_COMPRESSIBILITY)+lg2(NUM_SET)));
+#endif
 }
 
 uint32_t CACHE::get_compressed_size(const char* data) {

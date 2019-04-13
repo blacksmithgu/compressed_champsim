@@ -3,11 +3,13 @@
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 CHAMPSIM=${SCRIPT_DIR}/..
 
-# Uncompressed: Hawkeye, LRU
+# Uncompressed: Hawkeye, LRU, RRIP
 ${CHAMPSIM}/build_champsim.sh --uncompressed --policy hawkeye_final --name hawkeye
 ${CHAMPSIM}/build_champsim.sh --uncompressed --policy lru --name lru
+${CHAMPSIM}/build_champsim.sh --uncompressed --policy drrip --name drrip
 
-# Compressed: clru, crrip, chawkeye (YACCgen)
+# Compressed: clru, crrip, chawkeye (YACCgen), camp
 ${CHAMPSIM}/build_champsim.sh --policy clru --name clru
 ${CHAMPSIM}/build_champsim.sh --policy crrip --name crrip
-${CHAMPSIM}/build_champsim.sh --policy chawkeye --name chawkeye_yaccgen -- -DCACHEGEN="YACCgen\<1024\>"
+${CHAMPSIM}/build_champsim.sh --policy chawkeye --name chawkeye
+${CHAMPSIM}/build_champsim.sh --policy camp --name camp
