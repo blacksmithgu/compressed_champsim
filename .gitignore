@@ -1,4 +1,5 @@
 bin
+test_bin
 obj
 logs
 *.bak

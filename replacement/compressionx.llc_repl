@@ -7,7 +7,7 @@
 #include <map>
 
 #ifndef CACHEGEN
-    #define CACHEGEN OPTgen<1024>
+    #define CACHEGEN OPTgen<16384>
 #endif
 
 // Tracker used for printing out compressibility stats.
@@ -53,13 +53,10 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 }
 
 void CACHE::llc_replacement_final_stats() {
-    // Remaining outstanding accesses are misses.
-    for(const auto& access : outstanding_accesses) cachegen_misses++;
-
     double hitrate = cachegen_hits / double(cachegen_hits + cachegen_misses);
 
-    printf("Total Decisions: %ld\n", cachegen_hits + cachegen_misses);
-    printf("Decisions Made: %ld hits / %ld misses (%.2f hit rate)\n\n", cachegen_hits, cachegen_misses, hitrate);
+    printf("Total Accesses: %ld\n", cachegen_hits + cachegen_misses);
+    printf("Access Results: %ld hits / %ld misses (%.2f hit rate)\n\n", cachegen_hits, cachegen_misses, hitrate * 100.0);
 
     compression_tracker.print();
 }
@@ -138,12 +135,16 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     auto access_iter = outstanding_accesses.find(line_addr);
     if(access_iter != outstanding_accesses.end()) {
         uint64_t access_time = access_iter->second;
+        uint64_t superblock = get_sb_tag(line_addr);
 
         // Record the access in Optgen to get the hit/miss decision, and then increment the appropriate counters.
-        bool decision = cachegens[set].try_cache(access_time, num_accesses[set], line_addr, 1);
+        bool decision = cachegens[set].try_cache(access_time, num_accesses[set], superblock, 1);
 
         if(decision) cachegen_hits++;
         else cachegen_misses++;
+    } else {
+        // The first time we see a cache line will force a compulsory miss.
+        cachegen_misses++;
     }
 
     outstanding_accesses[line_addr] = num_accesses[set];

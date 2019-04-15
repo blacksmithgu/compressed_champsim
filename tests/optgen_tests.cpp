@@ -22,6 +22,7 @@ constexpr std::array<Interval, 6> reuse_access_stream {
 };
 
 int main() {
+    std::cout << "OPTGEN TEST" << std::endl;
     OPTgen<1024> test_optgen(2);
     int hits = 0;
     for (int i = 0; i < reuse_access_stream.size(); i++) {
@@ -32,4 +33,30 @@ int main() {
     }
     std::cout << "Hits are " << hits << std::endl;
     assert(hits == 4);
+    std::cout << std::endl;
+
+    std::cout << "YACCGEN TEST" << std::endl;
+    YACCgen<1024> yaccgen(2);
+
+    // overlapping superblock usage intervals
+    assert(yaccgen.try_cache(0, 10, 0, 2));
+    assert(yaccgen.try_cache(4, 14, 0, 2));
+
+    // different superblock
+    assert(yaccgen.try_cache(0, 20, 1, 1));
+
+    // overlapping; cache is full, should reject
+    assert(!yaccgen.try_cache(1, 21, 1, 1));
+    assert(!yaccgen.try_cache(1, 22, 0, 2));
+
+    // should replace first superblock 0.
+    assert(yaccgen.try_cache(15, 20, 3, 1));
+
+    // much later on, should replace both superblocks.
+    assert(yaccgen.try_cache(50, 80, 3, 1));
+    assert(yaccgen.try_cache(50, 81, 3, 1));
+
+    // off-by-one-errors.
+    assert(!yaccgen.try_cache(80, 81, 3, 1));
+    std::cout << "all assertions passed" << std::endl;
 }

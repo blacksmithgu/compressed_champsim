@@ -18,12 +18,12 @@ struct CacheGen {
     /**
      * Attempt to cache the given usage interval, returning true if it can be cached and false otherwise.
      */
-    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) = 0;
+    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t compression_factor) = 0;
 
     /**
      * Return true if the line can be cached, and false otherwise.
      */
-    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) const = 0;
+    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t compression_factor) const = 0;
 
     /**
      * Obtain the total number of accesses recorded by the oracle.
@@ -103,6 +103,9 @@ public:
         return std::max(std::min(quanta, _head_quanta + _size - 1), _head_quanta);
     }
 
+    uint64_t head_quanta() const { return _head_quanta; }
+    uint64_t end_quanta() const { return (_head_quanta + _size == 0) ? 0 : _head_quanta + _size - 1; }
+
     // Operator [] overrides.
     const T& operator[](size_t quanta) const { return buffer[quanta_index(quanta)]; }
     T& operator[](size_t quanta) { return buffer[quanta_index(quanta)]; }
@@ -130,9 +133,9 @@ template<size_t capacity> struct OPTgen : public CacheGen {
      * Attempt to cache the given usage interval, returning true if it can be cached and false otherwise.
      * Note that end_quanta > start_quanta (strictly), and both are *inclusive*.
      */
-    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) override {
+    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t compression_factor) override {
         num_attempted_cached++;
-        if(!can_cache(start_quanta, end_quanta, address, compression_factor)) return false;
+        if(!can_cache(start_quanta, end_quanta, superblock, compression_factor)) return false;
 
         // start_quanta is in or after the buffer (via can_cache), and end_quanta is after start_quanta, so shift up
         // until it's in the buffer.
@@ -148,7 +151,7 @@ template<size_t capacity> struct OPTgen : public CacheGen {
     /**
      * Return true if the line would be cached, and false otherwise. Note both start and end quanta are inclusive.
      */
-    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) const override {
+    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t compression_factor) const override {
         if(liveness.before_start(start_quanta)) return false;
         if(liveness.after_end(start_quanta)) return true;
 
@@ -170,82 +173,63 @@ template<size_t capacity> struct OPTgen : public CacheGen {
     virtual uint64_t num_hits() const override { return num_cached; }
 };
 
-/**
- * Superblock in YACC; has a compression factor, current capacity.
- */
-struct YACCSuperblock {
-    // The address of the superblock.
-    uint64_t address;
+template<uint32_t capacity> struct YACCSuperblock {
+    // The time that this superblock started.
+    uint64_t start_quanta;
+
+    // The actual superblock ID for this superblock.
+    uint64_t superblock;
 
     // The compression factor of this superblock.
-    uint32_t compression_factor;
+    uint32_t cf;
 
-    // The number of entries currently in the superblock.
-    uint32_t entries;
+    // The liveness within this superblock/way.
+    OptgenRingBuffer<uint8_t, capacity> liveness;
 
-    YACCSuperblock(uint64_t addr, uint32_t cf, uint32_t entries) : address(addr), compression_factor(cf), entries(entries) {}
-    YACCSuperblock() : address(0x0), compression_factor(1), entries(0) {}
-};
+    YACCSuperblock(uint64_t start, uint64_t superblock, uint32_t cf)
+        : start_quanta(start), superblock(superblock), cf(cf), liveness() {}
+    YACCSuperblock() : YACCSuperblock(0, 0, 0) {}
 
-/**
- * A time quanta in a YACC-based cache; supports trying adding new cache lines.
- */
-struct YACCQuanta {
-    // The map of superblock address -> superblock.
-    std::map<uint64_t, YACCSuperblock> superblocks;
+    // The time that the last cached line ended.
+    uint64_t end_quanta() const { return start_quanta + liveness.end_quanta(); }
 
-    // The max number of allowed entries.
-    uint32_t cache_size;
+    /** Return true if the superblock can cache the given usage interval. */
+    bool can_cache(uint64_t start, uint64_t end) const {
+        if(start < start_quanta) return false;
 
-    YACCQuanta(uint32_t cache_size) : cache_size(cache_size) {}
-    YACCQuanta() : YACCQuanta(16) {}
+        uint64_t rel_start = start - start_quanta;
+        uint64_t rel_end = end - start_quanta;
 
-    bool try_cache(uint64_t address, uint32_t compression_factor) {
-        uint64_t superblock_addr = YACCQuanta::superblock_for(address);
-        auto block = superblocks.find(superblock_addr);
+        if(liveness.before_start(rel_start)) return false;
+        if(liveness.after_end(rel_start)) return true;
 
-        // Two cases: if the super block is not in the cache, then we can cache if there's still cache lines.
-        // If the super block is in the cache, we can cache if the lines are the same compression factor and there is
-        // still space left within the superblock.
-        if(block == superblocks.end()) {
-            if(superblocks.size() >= cache_size) return false;
-            superblocks[superblock_addr] = YACCSuperblock(superblock_addr, compression_factor, 1);
-        } else {
-            if(block->second.compression_factor != compression_factor || block->second.entries >= block->second.compression_factor) return false;
-            block->second.entries++;
-        }
+        // Start quanta is in bounds, check if all entries are < max cache size.
+        for(uint64_t quanta = rel_start; quanta <= liveness.clamp(rel_end); quanta++)
+            if(liveness[quanta] >= cf) return false;
 
         return true;
     }
 
-    // Return true if this quanta can store the given address with the given compression factor, and false otherwise.
-    bool can_cache(uint64_t address, uint32_t compression_factor) const {
-        uint64_t superblock_addr = YACCQuanta::superblock_for(address);
-        auto block = superblocks.find(superblock_addr);
+    /** Cache the given usage interval. */
+    void cache(uint64_t start, uint64_t end) {
+        uint64_t rel_start = start - start_quanta;
+        uint64_t rel_end = end - start_quanta;
 
-        // Two cases: if the super block is not in the cache, then we can cache if there's still cache lines.
-        // If the super block is in the cache, we can cache if the lines are the same compression factor and there is
-        // still space left within the superblock.
-        if(block == superblocks.end()) {
-            return superblocks.size() < cache_size;
-        } else {
-            return block->second.compression_factor == compression_factor && block->second.entries < block->second.compression_factor;
-        }
-    }
+        // start_quanta is in or after the buffer (via can_cache), and end_quanta is after start_quanta, so shift up
+        // until it's in the buffer.
+        while(liveness.after_end(rel_end)) liveness.push(0);
 
-    // Obtain the super block address given a full address; this is just dropping 6 bits (the offset bits in a cache
-    // line) and an additional 2 bits (for the 4 lines per superblock).
-    static uint64_t superblock_for(uint64_t address) {
-        return address & ~0xff;
+        // Increment all entries in the buffer from clamp(start_quanta) to end_quanta.
+        for(uint64_t quanta = liveness.clamp(rel_start); quanta <= rel_end; quanta++) liveness[quanta]++;
     }
 };
 
 /**
- * A cache model which checks if YACC would be able to cache given cache accesses.
+ * A cache model which checks if YACC would be able to cache given cache accesses. This is a homogenous cache model.
  */
 template<uint32_t capacity> struct YACCgen : public CacheGen {
-    // Liveness vector (with the superblocks in the cache at the time); capacity limited.
-    OptgenRingBuffer<YACCQuanta, capacity> liveness;
+    // A per-way tracker for which superblock is currently active.
+    std::vector<YACCSuperblock<capacity>> superblocks;
 
     // The number of total cached lines in the past.
     uint64_t num_cached = 0;
@@ -256,23 +240,74 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
     // The size of the cache, in cache lines.
     uint64_t cache_size;
 
-    YACCgen(uint32_t cache_size) : cache_size(cache_size) {}
+    YACCgen(uint32_t cache_size) : cache_size(cache_size), superblocks(cache_size) {}
     YACCgen() : YACCgen(16) {}
+
+    /**
+     * Find a way which can store the given usage interval. If there are multiple choices, choose the one
+     * with the latest old end time.
+     */
+    int find_suitable_way(uint64_t start, uint64_t end, uint64_t superblock, uint32_t cf) const {
+        // For simplicity, we'll do this in multiple passes. First, look for a way with the same superblock and
+        // compressibility.
+        int best_way = -1, best_time = 0;
+        for(int index = 0; index < cache_size; index++) {
+            // This superblock doesn't match the incoming line cf or superblock ID.
+            if(superblocks[index].cf != cf || superblocks[index].superblock != superblock) continue;
+
+            // This superblock does not overlap the incoming interval.
+            if(start < superblocks[index].start_quanta || start > superblocks[index].end_quanta()) continue;
+
+            // Check that there is actually space in this superblock.
+            if(!superblocks[index].can_cache(start, end)) continue;
+
+            // Choose the superblock with the latest end time.
+            if(best_way == -1 || best_time < superblocks[index].end_quanta()) {
+                best_way = index;
+                best_time = superblocks[index].end_quanta();
+            }
+        }
+
+        if(best_way != -1) return best_way;
+
+        // We couldn't find any overlapping superblocks with same cf/sb with space, so we need to look for empty ways or
+        // ways with available space.
+        best_way = -1, best_time = 0;
+        for(int index = 0; index < cache_size; index++) {
+            // If this superblock is empty, we can put something in it.
+            if(superblocks[index].cf == 0 && best_way == -1) {
+                best_way = index; best_time = 0; continue;
+            }
+
+            // If this superblock ends before the incoming interval starts, we can put it here.
+            if(superblocks[index].end_quanta() < start && (best_way == -1 || best_time < superblocks[index].end_quanta())) {
+                best_way = index;
+                best_time = superblocks[index].end_quanta();
+            }
+        }
+
+        // There may be no available superblocks, or no non-overlapping ones at this point, in which case we return -1.
+        return best_way;
+    }
 
     /**
      * Attempt to cache the given usage interval, returning true if it can be cached and false otherwise.
      * Note that end_quanta > start_quanta (strictly), and both are *inclusive*.
      */
-    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) override {
+    virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t cf) override {
         num_attempted_cached++;
-        if(!can_cache(start_quanta, end_quanta, address, compression_factor)) return false;
 
-        // start_quanta is in or after the buffer (via can_cache), and end_quanta is after start_quanta, so shift up
-        // until it's in the buffer.
-        while(liveness.after_end(end_quanta)) liveness.push(YACCQuanta(cache_size));
+        // Look for an eligible way to put this usage interval.
+        int target_way = find_suitable_way(start_quanta, end_quanta, superblock, cf);
+        if(target_way == -1) return false;
 
-        // Increment all entries in the buffer from clamp(start_quanta) to end_quanta.
-        for(uint64_t quanta = liveness.clamp(start_quanta); quanta <= end_quanta; quanta++) liveness[quanta].try_cache(address, compression_factor);
+        // If the superblock + cf matches, extend the current superblock; otherwise, create a new one.
+        if(superblocks[target_way].cf == cf && superblocks[target_way].superblock == superblock) {
+            superblocks[target_way].cache(start_quanta, end_quanta);
+        } else {
+            superblocks[target_way] = YACCSuperblock<capacity>(start_quanta, superblock, cf);
+            superblocks[target_way].cache(start_quanta, end_quanta);
+        }
 
         num_cached++;
         return true;
@@ -281,15 +316,8 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
     /**
      * Return true if the line would be cached, and false otherwise. Note both start and end quanta are inclusive.
      */
-    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t address, uint32_t compression_factor) const override {
-        if(liveness.before_start(start_quanta)) return false;
-        if(liveness.after_end(start_quanta)) return true;
-
-        // Start quanta is in bounds, check if this usage interval fits at every quanta.
-        for(uint64_t quanta = start_quanta; quanta <= liveness.clamp(end_quanta); quanta++)
-            if(!liveness[quanta].can_cache(address, compression_factor)) return false;
-
-        return true;
+    virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t cf) const override {
+        return find_suitable_way(start_quanta, end_quanta, superblock, cf) != -1;
     }
 
     /**
@@ -353,14 +381,14 @@ struct UnboundedOPTgen : public CacheGen {
      * Returns true if it was successful, updating OPTgen's state
      * along the way, and false if it failed.
      */
-    virtual bool try_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t address, uint32_t compression_factor) override {
+    virtual bool try_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t superblock, uint32_t compression_factor) override {
         // First things first, immediately record that an attempted
         // access occured on the interval [curr_quanta, last_quanta]
 		num_attempted_cached++;
 
         // Figure out if OPTgen would cache the line; if it would, we
         // need to update the liveness history.
-        if(!can_cache(last_quanta, curr_quanta, address, compression_factor)) return false;
+        if(!can_cache(last_quanta, curr_quanta, superblock, compression_factor)) return false;
 
         // We're resizing, so let's do things intelligently:
         // 1. Go through the existing part of the history, looking for entries which are full.
@@ -393,7 +421,7 @@ struct UnboundedOPTgen : public CacheGen {
      *
      * Does not mutate OPTgen's state.
      */
-    virtual bool can_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t address, uint32_t compression_factor) const override {
+    virtual bool can_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t superblock, uint32_t compression_factor) const override {
         // If the last quanta is before the start, then the cache is already full.
         if(liveness_index(last_quanta) < 0) return false;
 
@@ -476,14 +504,14 @@ struct UnboundedSizeAwareOPTgen : public CacheGen {
      * Returns true if it was successful, updating OPTgen's state
      * along the way, and false if it failed.
      */
-    virtual bool try_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t address, uint32_t compression_factor) override {
+    virtual bool try_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t superblock, uint32_t compression_factor) override {
         // First things first, immediately record that an attempted
         // access occured on the interval [curr_quanta, last_quanta]
 		num_attempted_cached++;
 
         // Figure out if OPTgen would cache the line; if it would, we
         // need to update the liveness history.
-        if(!can_cache(last_quanta, curr_quanta, address, compression_factor)) return false;
+        if(!can_cache(last_quanta, curr_quanta, superblock, compression_factor)) return false;
 
         uint32_t size = 64 / compression_factor;
 
@@ -518,7 +546,7 @@ struct UnboundedSizeAwareOPTgen : public CacheGen {
      *
      * Does not mutate OPTgen's state.
      */
-    virtual bool can_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t address, uint32_t compression_factor) const override {
+    virtual bool can_cache(uint64_t last_quanta, uint64_t curr_quanta, uint64_t superblock, uint32_t compression_factor) const override {
         // If the last quanta is before the start, then the cache is already full.
         if(liveness_index(last_quanta) < 0) return false;
 
