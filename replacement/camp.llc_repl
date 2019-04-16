@@ -28,15 +28,23 @@ CompressionTracker compression_tracker;
 // Number of global cache accesses between each policy update (when the auxiliary tag arrays are checked to see if
 // certain block sizes should be prioritized/deprioritized). When an interval ends, the policy is updated and counters
 // are reset.
+#ifndef SIP_UPDATE_INTERVAL
 #define SIP_UPDATE_INTERVAL 25000
+#endif
 
 // Number of unique block sizes used by SIP.
+#ifndef NUM_BLOCK_SIZES
 #define NUM_BLOCK_SIZES 8
-#define SETS_PER_BLOCK_SIZE 32
+#endif
+#define SETS_PER_BLOCK_SIZE ((32 * 8) / NUM_BLOCK_SIZES)
 
 // SIP Counter constants; there is one SIP counter per block size, which records whether it is beneficial to prioritize
 // a given block size.
+#ifndef SIP_COUNTER_BITS
+#error we cant compile plz fix me
+plz fix
 #define SIP_COUNTER_BITS 16
+#endif
 #define SIP_COUNTER_MAX (1 << SIP_COUNTER_BITS)
 #define SIP_THRESHOLD (SIP_COUNTER_MAX/2)
 
@@ -271,7 +279,7 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
 
     // Track compressibility of lines and update RRPV.
     compression_tracker.increment(cf);
-    
+
     local_set_rrpv(rrpv[set], way, compressed_index, compressed_size, hit != 0, type == WRITEBACK, -1);
 }
 
