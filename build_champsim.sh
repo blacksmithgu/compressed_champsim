@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
-OPTIONS=$(getopt -o b:p:r:p:c:n:s:w:x:k: \
-    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways:,compression-algo:,superblock: -- "$@")
+OPTIONS=$(getopt -o b:p:r:p:c:n:s:w:x:k \
+    --long branch:,l1prefetcher:,l2prefetcher:,policy:,cores:,name:,compressed,uncompressed,new-trace,old-trace,llc-sets:,llc-ways:,compression-algo:,no-superblock -- "$@")
 
 if [ $? != 0 ]; then echo "Failed to parse options..." >& 2; exit 1; fi
 
