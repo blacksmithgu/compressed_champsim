@@ -137,7 +137,7 @@ fi
 # Print out how many sets/ways to build for.
 echo "${BOLD}Building with ${LLC_SETS} sets / ${LLC_WAYS} ways...${NORMAL}"
 COMPILE_OPTIONS="${COMPILE_OPTIONS} -DLLC_SET_PERCORE=${LLC_SETS} -DLLC_WAY=${LLC_WAYS}"
- 
+
 echo
 echo "Command Line Arguments: ${COMPILE_OPTIONS}"
 
@@ -148,11 +148,17 @@ cp prefetcher/${L1D_PREFETCHER}.l1d_pref prefetcher/l1d_prefetcher.cc
 cp prefetcher/${L2C_PREFETCHER}.l2c_pref prefetcher/l2c_prefetcher.cc
 cp replacement/${LLC_REPLACEMENT}.llc_repl replacement/llc_replacement.cc
 
+# Number of threads
+HARDWARE_THREADS=$(2>/dev/null nproc --all)
+if [$? != 0]; then
+    HARDWARE_THREADS=16
+fi
+
 # Build
 mkdir -p bin
 rm -f bin/champsim
-make -s -j16 clean
-make -s -j16 ExternalCFlags="${COMPILE_OPTIONS}"
+make -s -j${HARDWARE_THREADS} clean
+make -s -j${HARDWARE_THREADS} ExternalCFlags="${COMPILE_OPTIONS}"
 
 # Sanity check
 echo ""
