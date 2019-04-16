@@ -35,7 +35,7 @@ while true; do
         --uncompressed) COMPRESSION="uncompressed"; shift;;
         --new-trace) TRACE_TYPE="data"; shift;;
         --old-trace) TRACE_TYPE="normal"; shift;;
-        --superblock) SUPERBLOCK=$2; shift 2;;
+        --no-superblock) SUPERBLOCK="no"; shift;;
         --llc-sets) LLC_SETS=$2; shift 2;;
         --llc-ways) LLC_WAYS=$2; shift 2;;
         --) shift; break;;
