@@ -18,7 +18,7 @@ BINARY_NAME=
 COMPRESSION="compressed"
 COMPRESSION_ALGO="cpack"
 SUPERBLOCK="yes"
-TRACE_TYPE="new"
+TRACE_TYPE="data"
 LLC_SETS=2048
 LLC_WAYS=16
 
@@ -33,8 +33,8 @@ while true; do
         --compressed) COMPRESSION="compressed"; shift;;
         --compression-algo) COMPRESSION_ALGO=$2; shift 2;;
         --uncompressed) COMPRESSION="uncompressed"; shift;;
-        --new-trace) TRACE_TYPE="new"; shift;;
-        --old-trace) TRACE_TYPE="old"; shift;;
+        --new-trace) TRACE_TYPE="data"; shift;;
+        --old-trace) TRACE_TYPE="normal"; shift;;
         --superblock) SUPERBLOCK=$2; shift 2;;
         --llc-sets) LLC_SETS=$2; shift 2;;
         --llc-ways) LLC_WAYS=$2; shift 2;;
@@ -104,8 +104,8 @@ else
 fi
 
 # Check for new/old traces
-if [ "${TRACE_TYPE}" = "new" ]; then
-    echo "${BOLD}Building with new traces...${NORMAL}"
+if [ "${TRACE_TYPE}" = "data" ]; then
+    echo "${BOLD}Building with data-augmented traces...${NORMAL}"
     COMPILE_OPTIONS="${COMPILE_OPTIONS} -DDATA_TRACE"
 fi
 
@@ -151,8 +151,8 @@ cp replacement/${LLC_REPLACEMENT}.llc_repl replacement/llc_replacement.cc
 # Build
 mkdir -p bin
 rm -f bin/champsim
-make -s clean
-make -s ExternalCFlags="${COMPILE_OPTIONS}"
+make -s -j16 clean
+make -s -j16 ExternalCFlags="${COMPILE_OPTIONS}"
 
 # Sanity check
 echo ""

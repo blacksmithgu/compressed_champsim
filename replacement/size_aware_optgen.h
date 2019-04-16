@@ -43,7 +43,7 @@ struct CacheGen {
  */
 template<typename T, uint32_t _capacity> class OptgenRingBuffer {
     // The buffer of actual elements.
-    std::array<T, _capacity> buffer = {0};
+    std::vector<T> buffer;
 
     // The current size of the buffer.
     size_t _size = 0;
@@ -65,7 +65,7 @@ template<typename T, uint32_t _capacity> class OptgenRingBuffer {
     }
 
 public:
-    OptgenRingBuffer() : buffer(), _size(0), _head(0), _head_quanta(0) {}
+    OptgenRingBuffer() : buffer(_capacity, 0), _size(0), _head(0), _head_quanta(0) {}
 
     // Push a new element onto the ring buffer.
     void push(T&& element) {
@@ -228,6 +228,9 @@ template<uint32_t capacity> struct YACCSuperblock {
  * A cache model which checks if YACC would be able to cache given cache accesses. This is a homogenous cache model.
  */
 template<uint32_t capacity> struct YACCgen : public CacheGen {
+    // The size of the cache, in cache lines.
+    uint64_t cache_size;
+
     // A per-way tracker for which superblock is currently active.
     std::vector<YACCSuperblock<capacity>> superblocks;
 
@@ -236,9 +239,6 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
 
     // The total number of lines which were attempted to be cached.
     uint64_t num_attempted_cached = 0;
-
-    // The size of the cache, in cache lines.
-    uint64_t cache_size;
 
     YACCgen(uint32_t cache_size) : cache_size(cache_size), superblocks(cache_size) {}
     YACCgen() : YACCgen(16) {}
@@ -250,8 +250,9 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
     int find_suitable_way(uint64_t start, uint64_t end, uint64_t superblock, uint32_t cf) const {
         // For simplicity, we'll do this in multiple passes. First, look for a way with the same superblock and
         // compressibility.
-        int best_way = -1, best_time = 0;
-        for(int index = 0; index < cache_size; index++) {
+        int best_way = -1;
+        uint64_t best_time = 0;
+        for(int index = 0; index < int(cache_size); index++) {
             // This superblock doesn't match the incoming line cf or superblock ID.
             if(superblocks[index].cf != cf || superblocks[index].superblock != superblock) continue;
 
@@ -272,8 +273,9 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
 
         // We couldn't find any overlapping superblocks with same cf/sb with space, so we need to look for empty ways or
         // ways with available space.
-        best_way = -1, best_time = 0;
-        for(int index = 0; index < cache_size; index++) {
+        best_way = -1;
+        best_time = 0;
+        for(int index = 0; index < int(cache_size); index++) {
             // If this superblock is empty, we can put something in it.
             if(superblocks[index].cf == 0 && best_way == -1) {
                 best_way = index; best_time = 0; continue;
@@ -295,6 +297,7 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
      * Note that end_quanta > start_quanta (strictly), and both are *inclusive*.
      */
     virtual bool try_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t cf) override {
+        assert(start_quanta <= end_quanta);
         num_attempted_cached++;
 
         // Look for an eligible way to put this usage interval.
@@ -317,6 +320,7 @@ template<uint32_t capacity> struct YACCgen : public CacheGen {
      * Return true if the line would be cached, and false otherwise. Note both start and end quanta are inclusive.
      */
     virtual bool can_cache(uint64_t start_quanta, uint64_t end_quanta, uint64_t superblock, uint32_t cf) const override {
+        assert(start_quanta <= end_quanta);
         return find_suitable_way(start_quanta, end_quanta, superblock, cf) != -1;
     }
 
