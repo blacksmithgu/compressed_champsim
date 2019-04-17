@@ -150,7 +150,7 @@ cp replacement/${LLC_REPLACEMENT}.llc_repl replacement/llc_replacement.cc
 
 # Number of threads
 HARDWARE_THREADS=$(2>/dev/null nproc --all)
-if [$? != 0]; then
+if [ $? != 0 ]; then
     HARDWARE_THREADS=16
 fi
 
