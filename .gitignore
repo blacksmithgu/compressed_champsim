@@ -4,6 +4,7 @@ obj
 logs
 *.bak
 *.swp
+*.nfs*
 
 # OH WHY
 replacement/base_replacement.cc

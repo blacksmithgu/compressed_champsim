@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 from argparse import ArgumentParser, FileType
 import csv
 import cvxpy as cp
@@ -12,7 +13,7 @@ class Interval:
         self.cf = cf
 
     def __str__(self):
-        return "(start: {} end: {} x{})".format(self.start, self.end, self.cf)
+        return "({} - {}, x{})".format(self.start, self.end, self.cf)
 
     def __repr__(self):
         return str(self)
@@ -21,31 +22,35 @@ class Interval:
         return (self.start, self.end, self.cf)
 
 # returns gapless access numbers
-# we get this by default, we don't need it
 def transformToNormalizedIntervals(integer_interval_tuples):
     intervals = [Interval(x, y, z) for x, y, z in integer_interval_tuples]
 
     current_quanta = 0
     startTimes = sorted(intervals, key=lambda x: x.start)
     endTimes = sorted(intervals, key=lambda x: x.end)
-    print("Start times: ", end='')
-    print(startTimes)
-    print("End times: ", end='')
-    print(endTimes)
 
     startIndex = 0
     endIndex = 0
     while startIndex < len(startTimes) or endIndex < len(endTimes):
-        # starts are earlier, set these first
-        while startIndex < len(startTimes) and (endIndex == len(endTimes) or startTimes[startIndex].start <= endTimes[endIndex].end):
+        # Three cases: start < end, start > end, start == end. Third case only occurs if a reuse interval was both
+        # ended/started by a reuse.
+        if startIndex < len(startTimes) and endIndex < len(endTimes) and startTimes[startIndex].start == endTimes[endIndex].end:
             startTimes[startIndex].start = current_quanta
-            startIndex += 1
-            current_quanta += 1
-
-        while endIndex < len(endTimes) and (startIndex == len(startTimes) or startTimes[startIndex].start >= endTimes[endIndex].end):
             endTimes[endIndex].end = current_quanta
+            startIndex += 1
             endIndex += 1
-            current_quanta += 1
+        else:
+            start_quanta = startTimes[startIndex].start if startIndex < len(startTimes) else float('inf')
+            end_quanta = endTimes[endIndex].end if endIndex < len(endTimes) else float('inf')
+
+            if start_quanta < end_quanta:
+                startTimes[startIndex].start = current_quanta
+                startIndex += 1
+            else:
+                endTimes[endIndex].end = current_quanta
+                endIndex += 1
+
+        current_quanta += 1
 
     return intervals, current_quanta - 1
 
@@ -57,37 +62,34 @@ def optimalForNormalizedIntervals(intervals, set_size=16):
     # a priority queue for the intervals
     # (end time, cf, indicator) tuples to sort correctly on the minheap
     open_intervals = []
-    number_of_timesteps = 2 * len(intervals) - 1
+    sorted_intervals = sorted(intervals, key=lambda k: k.start)
+    number_of_timesteps = max(map(lambda k: k.end, intervals))
 
-    indicator = cp.Variable(len(intervals), integer=True)
-    q4        = cp.Variable(number_of_timesteps, integer=True)
-    q2        = cp.Variable(number_of_timesteps, integer=True)
-    x1        = cp.Variable(number_of_timesteps, integer=True)
-    x2        = cp.Variable(number_of_timesteps, integer=True)
-    x4        = cp.Variable(number_of_timesteps, integer=True)
+    indicator = cp.Variable(len(intervals), boolean=True, name="indicator")
+    q4        = cp.Variable(number_of_timesteps, integer=True, name="q4")
+    q2        = cp.Variable(number_of_timesteps, integer=True, name="q2")
+    x1        = cp.Variable(number_of_timesteps, integer=True, name="x1")
+    x2        = cp.Variable(number_of_timesteps, integer=True, name="x2")
+    x4        = cp.Variable(number_of_timesteps, integer=True, name="x4")
 
     # transform into normalized access times
     var_constraints = []
-    for rowIdx in range(len(intervals)):
-        row = intervals[rowIdx]
-        # close everything before this
-        while len(open_intervals) > 0 and row.start >= open_intervals[0][0]:
-            current_end_time, current_cf, current_indicator = hq.heappop(open_intervals)
-
+    for rowIdx in range(len(sorted_intervals)):
+        row = sorted_intervals[rowIdx]
         hq.heappush(open_intervals, (row.end, row.cf, indicator[rowIdx]))
-        # output constraints at current time
-        # equations 1x, 2x, and 4x
-        var_constraints.append(x1[row.start] == cp.sum([x[2] for x in open_intervals if x[1] == 1]))
-        var_constraints.append(x2[row.start] == cp.sum([x[2] for x in open_intervals if x[1] == 2]))
-        var_constraints.append(x4[row.start] == cp.sum([x[2] for x in open_intervals if x[1] == 4]))
+        for time in range(row.start, sorted_intervals[rowIdx+1].start if rowIdx + 1 < len(intervals) else number_of_timesteps):
+            # close everything before this
+            while len(open_intervals) > 0 and time >= open_intervals[0][0]:
+                hq.heappop(open_intervals)
 
+            # output constraints at current time
+            # equations 1x, 2x, and 4x
+            var_constraints.append(x1[time] == cp.sum([x[2] for x in open_intervals if x[1] == 1]))
+            var_constraints.append(x2[time] == cp.sum([x[2] for x in open_intervals if x[1] == 2]))
+            var_constraints.append(x4[time] == cp.sum([x[2] for x in open_intervals if x[1] == 4]))
 
-    indicator_constraint = [0 <= indicator, indicator <= 1]
     objective = cp.Maximize(cp.sum(indicator))
-
-    constraints = it.chain(indicator_constraint,
-        # rest of variable constraints
-        var_constraints,
+    constraints = it.chain(var_constraints,
         # equation s
         [x1 + q2 + q4 <= set_size],
         # equations 4c and 2c
@@ -96,10 +98,7 @@ def optimalForNormalizedIntervals(intervals, set_size=16):
     )
 
     prob = cp.Problem(objective, constraints)
-    prob.solve();
-    print(prob)
-    print([x.value for x in indicator])
-    print(prob.status)
+    prob.solve(solver='GLPK_MI')
     epsilon = 0.3
     nearest = round(prob.value)
     # for now, it appears to be floating point issue, and can't fix
@@ -122,8 +121,7 @@ if __name__ == '__main__':
     assert(headers[0] == 'start' and headers[1] == 'end' and headers[2] == 'cf' and len(headers) == 3)
 
     intervals = [[int(y) for y in x] for x in intervalreader]
-    intervals = transformToNormalizedIntervals(intervals)
+    intervals, last_quanta = transformToNormalizedIntervals(intervals)
 
     value = optimalForNormalizedIntervals(intervals)
-    #print("status:", prob.status)
-    print("optimal value", value)
+    print("optimal value: ", value)

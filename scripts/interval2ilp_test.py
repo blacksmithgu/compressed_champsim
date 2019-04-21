@@ -15,6 +15,20 @@ def test_identity_transform():
     assert(0 == optimalForNormalizedIntervals(resultIntervals, set_size=0))
 
 
+def test_overlapping_start_end():
+    test_overlapping = [
+        (0, 1, 4),
+        (1, 3, 4),
+        (3, 7, 4),
+        (2, 6, 1)
+    ]
+    resultIntervals, resultQuanta = transformToNormalizedIntervals(test_overlapping)
+    assert(len(resultIntervals) == 4)
+    assert(resultIntervals[0].to_tuple() == (0, 1, 4))
+    assert(resultIntervals[1].to_tuple() == (1, 3, 4))
+    assert(resultIntervals[2].to_tuple() == (3, 5, 4))
+    assert(resultIntervals[3].to_tuple() == (2, 4, 1))
+
 def test_nearly_intact_transform():
     test_intervals = [
         (0, 2, 4),
@@ -51,9 +65,8 @@ def test_enhanced_reordering():
     ]
     retIntervals, end_quanta = transformToNormalizedIntervals(test_intervals)
     # true as a general rule
-    print(retIntervals)
     assert(end_quanta == len(test_intervals) * 2 - 1)
     assert(len(test_intervals) == len(retIntervals))
     for interval, solution in zip(retIntervals, solutions):
         assert(interval.to_tuple() == solution)
-    assert(3 == optimalForNormalizedIntervals(retIntervals, set_size=1))
+    assert(2 == optimalForNormalizedIntervals(retIntervals, set_size=1))
