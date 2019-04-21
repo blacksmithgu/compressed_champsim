@@ -35,7 +35,10 @@ CompressionTracker compression_tracker;
 std::vector<UsageInterval> usage_intervals[LLC_SET];
 
 // Per-set access counts.
-uint32_t num_accesses[LLC_SET];
+uint32_t num_accesses[LLC_SET] = {0};
+
+// The total number of compulsory misses (from the first access to a cache line).
+uint64_t compulsory_misses = 0;
 
 // A cache line address -> access map of outstanding accesses which have not been reused yet.
 std::unordered_map<uint64_t, Access> outstanding_accesses;
@@ -69,6 +72,7 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 
 void CACHE::llc_replacement_final_stats() {
     compression_tracker.print();
+    printf("\n\nCompulsory Misses: %lu\n", compulsory_misses);
 
     // Create the output folder, if it doesn't already exist.
     mkdir(main_output_folder.c_str(), 0755);
@@ -109,6 +113,8 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     if(iter != outstanding_accesses.end()) {
         const Access& access = iter->second;
         usage_intervals[set].emplace_back(access.time, num_accesses[set], access.cf);
+    } else {
+        compulsory_misses++;
     }
 
     outstanding_accesses[line_address] = Access(num_accesses[set], cf);
