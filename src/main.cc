@@ -19,11 +19,11 @@ uint64_t warmup_instructions     = 1000000,
 time_t start_time;
 
 double ped_coefficient;
-string outputDecisionFile;
-string accessHistoryFile;
 unsigned obol_cost_ratio = 4;
 unsigned obol_cost_threshold = 160;
 
+// Used in some policies; set via the -o and -x flags.
+string main_output_folder;
 double benchmark_compression_ratio = 1.0;
 
 // PAGE TABLE
@@ -486,8 +486,7 @@ int main(int argc, char** argv)
             {"cloudsuite", no_argument, 0, 'c'},
             {"low_bandwidth",  no_argument, 0, 'b'},
             {"traces",  no_argument, 0, 't'},
-            {"output_decision", required_argument, 0, 'd'},
-            {"access_history", required_argument, 0, 'a'},
+            {"output", required_argument, 0, 'o'},
             {"cost_ratio", required_argument, 0, 'r'},
             {"cost_threshold", required_argument, 0, 'm'},
             {"ped_coefficient", required_argument, 0, 'p'},
@@ -525,11 +524,8 @@ int main(int argc, char** argv)
             case 't':
                 traces_encountered = 1;
                 break;
-            case 'd':
-                outputDecisionFile.assign(optarg);
-                break;
-            case 'a':
-                accessHistoryFile.assign(optarg);
+            case 'o':
+                main_output_folder.assign(optarg);
                 break;
             case 'r':
                 obol_cost_ratio = atol(optarg);

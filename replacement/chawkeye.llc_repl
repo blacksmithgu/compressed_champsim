@@ -37,7 +37,7 @@
 #endif
 
 #ifndef REDUCER_FUNC
-    #define REDUCER_FUNC reducer_average
+    #define REDUCER_FUNC reducer_sum
 #endif
 
 // The cache model/generator to use; OPTgen by default.
@@ -133,7 +133,8 @@ struct PCPredictor : public Predictor {
         if(counters.find(access.pc) == counters.end())
             return true;
 
-        return counters[access.pc].value() >= COUNTER_MAX_VALUE / 2;
+        bool friendly = counters[access.pc].value() >= COUNTER_MAX_VALUE / 2;
+        return friendly;
     }
 private:
     // PC-indexed counters.
@@ -356,10 +357,12 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         if(current_set[way].sbTag == get_sb_tag(full_addr >> LOG2_BLOCK_SIZE)
                 && current_set[way].compressionFactor == incoming_cf) {
             for(uint32_t ci = 0; ci < current_set[way].compressionFactor; ci++) {
-                uint32_t score = score_func(rrpv[set][way][ci], current_set[way].compressionFactor,
+                assert(current_set[way].valid[ci]);
+
+                const uint32_t score = score_func(rrpv[set][way][ci], current_set[way].compressionFactor,
                         accesses[set][way][ci].compressed_size);
                 if(score < minimum_score) {
-                    score = minimum_score;
+                    minimum_score = score;
                     victim_way = way;
                     victim_ci = ci;
                 }
@@ -374,9 +377,11 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
                             accesses[set][way][ci].compressed_size);
             }
 
-            uint32_t score = reducer_func(scores, index, current_set[way].compressionFactor);
+            assert(index > 0);
+
+            const uint32_t score = reducer_func(scores, index, current_set[way].compressionFactor);
             if(score < minimum_score) {
-                score = minimum_score;
+                minimum_score = score;
                 victim_way = way;
                 victim_ci = MAX_COMPRESSIBILITY;
             }
@@ -396,7 +401,7 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
     return victim_way;
 }
 
-// TODO: simulator should generate empty implementations of these if COMPRESSED_CACHE is defined.
+// TODO: simulator should generate empty implementations of these if mCOMPRESSED_CACHE is defined.
 uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
     uint64_t full_addr, uint32_t type) {
     std::cerr << "Normal find victim also called..." << std::endl;
@@ -410,8 +415,8 @@ uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, c
 void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index,
         uint64_t full_addr, uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t compression_factor,
         uint32_t compressed_size, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
-    // Writeback hit usually does not update the replacement state, so ignore it.
-    if (hit && (type == WRITEBACK)) return;
+    // Writebacks just add semi-random noise to cache accesses, so ignore them.
+    if (type == WRITEBACK) return;
 
     assert(set < LLC_SET && way < LLC_WAY);
     assert(compression_factor <= MAX_COMPRESSIBILITY && compressed_index < compression_factor);
@@ -422,6 +427,24 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     // Compute the address of the corresponding cache line, using that to create the cache access and do all the
     // memory-related operations.
     uint64_t line_addr = full_addr & ~(BLOCK_SIZE - 1);
+
+    // TODO: Move this nice printing stuff to a utility method somewhere for future debugging.
+    /*
+    if(set == 0) {
+        printf("%u (hit: %s, way: %u, ci: %u, cf: %u, la: %lx): [", num_accesses[set], hit ? "true" : "false",
+                way, compressed_index, compression_factor, line_addr);
+        for(int way = 0; way < LLC_WAY; way++) {
+            printf("[");
+            for(int ci = 0; ci < (int)compressed_cache_block[set][way].compressionFactor; ci++) {
+                if(ci != 0) printf(", ");
+                if(compressed_cache_block[set][way].valid[ci]) printf("%u", rrpv[set][way][ci]);
+                else printf("-");
+            }
+            printf("]");
+        }
+        printf("]\n");
+    }
+    */
 
     // If we've seen an access to this cache line before, then update Optgen and output this cache access.
     auto access_iter = outstanding_accesses.find(line_addr);
@@ -441,6 +464,9 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
         else predictor->detrain(first_access);
 
         if(decision) cachegen_hits++; else cachegen_misses++;
+    } else {
+        // First time we've seen this access, compulsory miss.
+        cachegen_misses++;
     }
 
     // Make a prediction based on the current counter values!
@@ -476,8 +502,10 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 }
 
 void CACHE::llc_replacement_final_stats() {
+    printf("\n");
     compression_tracker.print();
 
     printf("\n\n");
-    printf("Cachegen Performance: %lu hits/%lu misses\n", cachegen_hits, cachegen_misses);
+    printf("Cachegen Performance: %lu hits / %lu misses (%.2f)\n", cachegen_hits, cachegen_misses,
+            double(cachegen_hits) / double(cachegen_hits + cachegen_misses) * 100.0);
 }

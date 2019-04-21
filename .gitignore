@@ -7,3 +7,7 @@ logs
 
 # OH WHY
 replacement/base_replacement.cc
+replacement/llc_replacement.cc
+
+# Condor submission scripts
+*.condor

@@ -178,8 +178,3 @@ echo "Sets: ${LLC_SETS} / Ways: ${LLC_WAYS}"
 echo "Binary: bin/${BINARY_NAME}${NORMAL}"
 echo ""
 mv bin/champsim bin/${BINARY_NAME}
-
-cp branch/bimodal.bpred branch/branch_predictor.cc
-cp prefetcher/no.l1d_pref prefetcher/l1d_prefetcher.cc
-cp prefetcher/no.l2c_pref prefetcher/l2c_prefetcher.cc
-cp replacement/lru.llc_repl replacement/llc_replacement.cc

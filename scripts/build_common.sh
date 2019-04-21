@@ -12,4 +12,5 @@ ${CHAMPSIM}/build_champsim.sh --uncompressed --policy drrip --name drrip
 ${CHAMPSIM}/build_champsim.sh --policy clru --name clru
 ${CHAMPSIM}/build_champsim.sh --policy crrip --name crrip
 ${CHAMPSIM}/build_champsim.sh --policy chawkeye --name chawkeye
-${CHAMPSIM}/build_champsim.sh --policy camp --name camp
+${CHAMPSIM}/build_champsim.sh --no-superblock --policy chawkeye --name chawkeye-nosb -- -DREDUCER=reducer_sum
+${CHAMPSIM}/build_champsim.sh --no-superblock --policy camp --name camp

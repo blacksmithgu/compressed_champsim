@@ -1,0 +1,116 @@
+#include "cache.h"
+#include "compression_tracker.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#include <unordered_map>
+#include <vector>
+
+// An (unpaired) access in the cache.
+struct Access {
+    uint32_t time;
+    uint8_t cf;
+
+    Access(uint32_t time, uint8_t cf) : time(time), cf(cf) {}
+    Access() : Access(0, 0) {}
+};
+
+// A usage interval with a start, end, and compression factor.
+struct UsageInterval {
+    uint32_t start, end;
+    uint8_t cf;
+
+    UsageInterval(uint32_t start, uint32_t end, uint8_t cf)
+        : start(start), end(end), cf(cf) {}
+    UsageInterval() : UsageInterval(0, 0, 0) {}
+};
+
+// Tracker used for printing out compressibility stats.
+CompressionTracker compression_tracker;
+
+// Per-set lists of usage intervals.
+std::vector<UsageInterval> usage_intervals[LLC_SET];
+
+// Per-set access counts.
+uint32_t num_accesses[LLC_SET];
+
+// A cache line address -> access map of outstanding accesses which have not been reused yet.
+std::unordered_map<uint64_t, Access> outstanding_accesses;
+
+// External definition (from src/main.cc) which specifies the folder name to dump results to.
+extern std::string main_output_folder;
+
+/**
+ * Called to initialize the LLC replacement policy state.
+ */
+void CACHE::llc_initialize_replacement() {
+    assert(main_output_folder.size() > 0);
+}
+
+uint32_t CACHE::llc_find_victim(uint32_t cpu, uint64_t instr_id, uint32_t set, const BLOCK *current_set, uint64_t ip,
+    uint64_t full_addr, uint32_t type) {
+    std::cerr << "Normal find victim also called..." << std::endl;
+
+    // An assert() is legitimate here instead of an exit(), because this should never happen.
+    assert(0);
+    return 0;
+}
+
+void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t way, uint64_t full_addr, uint64_t ip,
+    uint64_t victim_addr, uint32_t type, uint8_t hit, uint64_t latency, uint64_t effective_latency) {
+    std::cout << "Normal Update replacement state called..." << std::endl;
+
+    // Assert is valid here as this should never happen.
+    assert(0);
+}
+
+void CACHE::llc_replacement_final_stats() {
+    compression_tracker.print();
+
+    // Create the output folder, if it doesn't already exist.
+    mkdir(main_output_folder.c_str(), 0755);
+
+    // Time to create thousands of files; create one CSV file of usage intervals per set.
+    for(uint32_t set = 0; set < LLC_SET; set++) {
+        std::string file_name = main_output_folder + "/" + std::to_string(set) + ".csv";
+        FILE* file = fopen(file_name.c_str(), "w");
+        fprintf(file, "start,end,cf\n");
+        for(const UsageInterval& interval : usage_intervals[set]) {
+            fprintf(file, "%u,%u,%hhu\n", interval.start, interval.end, interval.cf);
+        }
+        fclose(file);
+
+        printf("File Output: %s\n", file_name.c_str());
+    }
+}
+
+uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set, const COMPRESSED_CACHE_BLOCK *current_set,
+        uint64_t ip, uint64_t full_addr, uint32_t type, uint64_t incoming_cf, uint64_t incoming_size,
+        uint32_t& evicted_compressed_index) {
+    evicted_compressed_index = MAX_COMPRESSIBILITY;
+    return 0;
+}
+
+void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t way, uint32_t compressed_index, uint64_t full_addr,
+        uint64_t ip, uint64_t victim_addr, uint32_t type, uint32_t cf, uint32_t compressed_size, uint8_t hit,
+        uint64_t latency, uint64_t effective_latency) {
+    // Writeback hit does not update LRU state.
+    if (type == WRITEBACK && hit) return;
+
+    // Add this line to the # of compressible lines.
+    compression_tracker.increment(cf);
+
+    // Leech off of the LLC access stream, computing usage intervals.
+    uint64_t line_address = full_addr & ~(BLOCK_SIZE - 1);
+    auto iter = outstanding_accesses.find(line_address);
+    if(iter != outstanding_accesses.end()) {
+        const Access& access = iter->second;
+        usage_intervals[set].emplace_back(access.time, num_accesses[set], access.cf);
+    }
+
+    outstanding_accesses[line_address] = Access(num_accesses[set], cf);
+    num_accesses[set]++;
+}
