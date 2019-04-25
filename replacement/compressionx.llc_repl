@@ -90,7 +90,7 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         if(current_set[way].compressionFactor != 0) continue;
 
         // Otherwise, we found a line.
-        evicted_compressed_index = 4;
+        evicted_compressed_index = MAX_COMPRESSIBILITY;
         return way;
     }
 
@@ -104,7 +104,7 @@ uint32_t CACHE::llc_find_victim_cc(uint32_t cpu, uint64_t instr_id, uint32_t set
         }
     }
 
-    evicted_compressed_index = 4;
+    evicted_compressed_index = MAX_COMPRESSIBILITY;
     return victim;
 }
 

@@ -68,7 +68,7 @@ struct AuxiliaryTagArray {
 
     // Evict a way from the auxiliary cache; if compressed_index = 4, evicts all lines in a way.
     inline void evict(uint32_t way, uint32_t compressed_index) {
-        if(compressed_index == 4) {
+        if(compressed_index == MAX_COMPRESSIBILITY) {
             // If evicting line, set all valid = 0, and compression factor to 0.
             for(int cf = 0; cf < MAX_COMPRESSIBILITY; cf++) block[way].valid[cf] = 0;
             block[way].compressionFactor = 0;

@@ -43,10 +43,10 @@ void CACHE::llc_update_replacement_state(uint32_t cpu, uint32_t set, uint32_t wa
 void CACHE::llc_replacement_final_stats() {
     // Compute average utilization as a percentage between 0 - 400%.
     double utilization = double(total_cache_lines_stored_over_time) / double(num_accesses * LLC_SET * LLC_WAY);
-    
+
     std::cout << std::endl << std::endl;
     std::cout << "Total Accesses: " << num_accesses << std::endl;
-    std::cout << "Average Utilization (0% - 400%): " << std::fixed << std::setprecision(5) << (utilization * 100.0) << "%" << std::endl;
+    std::cout << "Average Utilization (0% - " << MAX_COMPRESSIBILITY << "00%): " << std::fixed << std::setprecision(5) << (utilization * 100.0) << "%" << std::endl;
     std::cout << std::endl;
     compression_tracker.print();
 }
