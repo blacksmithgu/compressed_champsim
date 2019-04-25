@@ -1,18 +1,18 @@
 # run with python3 -m pytest interval2ilp_test.py
 
-from interval2ilp import transformToNormalizedIntervals, optimalForNormalizedIntervals
+from interval2ilp import normalize_intervals, homogenous_optimal
 
 def test_identity_transform():
     test_identity = [
         (0, 5, 4)
     ]
-    resultIntervals, resultQuanta = transformToNormalizedIntervals(test_identity)
+    resultIntervals, resultQuanta = normalize_intervals(test_identity)
     assert(len(resultIntervals) == 1)
     assert((0, 1, 4) == resultIntervals[0].to_tuple())
     assert(1 == resultQuanta)
-    assert(1 == optimalForNormalizedIntervals(resultIntervals, set_size=2))
-    assert(1 == optimalForNormalizedIntervals(resultIntervals, set_size=1))
-    assert(0 == optimalForNormalizedIntervals(resultIntervals, set_size=0))
+    assert(1 == homogenous_optimal(resultIntervals, set_size=2))
+    assert(1 == homogenous_optimal(resultIntervals, set_size=1))
+    assert(0 == homogenous_optimal(resultIntervals, set_size=0))
 
 
 def test_overlapping_start_end():
@@ -22,7 +22,7 @@ def test_overlapping_start_end():
         (3, 7, 4),
         (2, 6, 1)
     ]
-    resultIntervals, resultQuanta = transformToNormalizedIntervals(test_overlapping)
+    resultIntervals, resultQuanta = normalize_intervals(test_overlapping)
     assert(len(resultIntervals) == 4)
     assert(resultIntervals[0].to_tuple() == (0, 1, 4))
     assert(resultIntervals[1].to_tuple() == (1, 3, 4))
@@ -38,7 +38,7 @@ def test_nearly_intact_transform():
         (7, 10, 4),
         (1, 9, 4)
     ]
-    retIntervals, end_quanta = transformToNormalizedIntervals(test_intervals)
+    retIntervals, end_quanta = normalize_intervals(test_intervals)
     assert(end_quanta == 11)
     assert(len(test_intervals) == len(retIntervals))
     for interval in retIntervals:
@@ -48,7 +48,6 @@ def test_nearly_intact_transform():
             # it should be unchanged
             tv = interval.to_tuple()
             assert(tv in test_intervals)
-    #assert(4 == optimalForNormalizedIntervals(retIntervals, set_size=1))
 
 def test_enhanced_reordering():
     test_intervals = [
@@ -63,10 +62,10 @@ def test_enhanced_reordering():
         (4, 5, 1),
         (1, 6, 2)
     ]
-    retIntervals, end_quanta = transformToNormalizedIntervals(test_intervals)
+    retIntervals, end_quanta = normalize_intervals(test_intervals)
     # true as a general rule
     assert(end_quanta == len(test_intervals) * 2 - 1)
     assert(len(test_intervals) == len(retIntervals))
     for interval, solution in zip(retIntervals, solutions):
         assert(interval.to_tuple() == solution)
-    assert(2 == optimalForNormalizedIntervals(retIntervals, set_size=1))
+    assert(2 == homogenous_optimal(retIntervals, set_size=1))

@@ -12,3 +12,6 @@ replacement/llc_replacement.cc
 
 # Condor submission scripts
 *.condor
+
+# python artifacts
+__pycache__
