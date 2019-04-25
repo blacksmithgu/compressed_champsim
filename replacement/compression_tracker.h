@@ -33,7 +33,7 @@ public:
         for (uint64_t i = MAX_COMPRESSIBILITY; i > 0; i /= 2) {
             const double ratio = count(i) / double(total_lines);
             denominator += count(i) * (1.0 / double(i));
-            printf("Compressible %ld: %ld (%.2f%%)\n", count(i), count(i), ratio * 100.0);
+            printf("Compressible %ld: %ld (%.2f%%)\n", i, count(i), ratio * 100.0);
         }
         double bench_comp = total_lines / denominator;
         double line_comp = (4 * count(4) + 2 * count(2) + count(1)) / double(total_lines);
