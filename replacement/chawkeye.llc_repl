@@ -142,7 +142,7 @@ private:
 };
 
 // A map-friendly struct which contains both a PC and a compression value.
-struct PCAndCompression { 
+struct PCAndCompression {
     uint64_t pc;
     uint32_t compression;
 
@@ -419,6 +419,7 @@ void CACHE::llc_update_replacement_state_cc(uint32_t cpu, uint32_t set, uint32_t
     if (type == WRITEBACK) return;
 
     assert(set < LLC_SET && way < LLC_WAY);
+    //printf("Index: %d, factor: %d\n", compressed_index, compression_factor);
     assert(compression_factor <= MAX_COMPRESSIBILITY && compressed_index < compression_factor);
 
     // Record compressibility of this line.

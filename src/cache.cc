@@ -1044,12 +1044,12 @@ uint32_t CACHE::get_compressed_size(const char* data) {
 uint64_t CACHE::get_compression_factor(uint32_t compressed_size) {
     uint64_t CF = 64 / std::max((uint32_t) 1, compressed_size);
 
-    if(CF >= 64) return 64;
-    else if(CF >= 32) return 32;
-    else if(CF >= 16) return 16;
-    else if(CF >= 8) return 8;
-    else if(CF >= 4) return 4;
-    else if(CF >= 2) return 2;
+    if(CF >= 64 && MAX_COMPRESSIBILITY >= 64) return 64;
+    else if(CF >= 32 && MAX_COMPRESSIBILITY >= 32) return 32;
+    else if(CF >= 16 && MAX_COMPRESSIBILITY >= 16) return 16;
+    else if(CF >= 8  && MAX_COMPRESSIBILITY >= 8) return 8;
+    else if(CF >= 4  && MAX_COMPRESSIBILITY >= 4) return 4;
+    else if(CF >= 2  && MAX_COMPRESSIBILITY >= 2) return 2;
     else return 1;
 }
 
